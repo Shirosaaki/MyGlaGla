@@ -42,9 +42,22 @@ jobs:
             echo "Style checks produced output; failing CI."
             exit 1
           fi
-  mirror:
+  test:
     runs-on: ubuntu-latest
     needs: compile
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Run unit tests (make run_test)
+        run: |
+          # Run the project's unit test target. This step will fail the job
+          # if tests fail (non-zero exit code).
+          make run_test
+  mirror:
+    runs-on: ubuntu-latest
+    needs: [compile, test]
     if: |
       github.repository != 'EpitechPGE3-2025/G-FUN-500-NCE-5-2-glados-1'
       && github.event_name == 'push'
