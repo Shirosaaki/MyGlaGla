@@ -10,7 +10,7 @@ on:
     - main
 
 env:
-  TARGET_REPO_URL: 'https://github.com/EpitechPGE3-2025/G-FUN-500-NCE-5-2-glados-1.git'
+  TARGET_REPO_URL: git@github.com:EpitechPGE3-2025/G-FUN-500-NCE-5-2-glados-1.git
 jobs:
   mirror:
     runs-on: ubuntu-latest
