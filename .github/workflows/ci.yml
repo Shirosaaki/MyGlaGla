@@ -12,8 +12,39 @@ on:
 env:
   TARGET_REPO_URL: git@github.com:EpitechPGE3-2025/G-FUN-500-NCE-5-2-glados-1.git
 jobs:
+  compile:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Run make check (compile)
+        run: |
+          # Run the project's check target which should build/verify the code.
+          # This step will fail the job if the build/compile fails.
+          make
+
+      - name: Ensure lambdananas is executable
+        run: |
+          # Make the style checker executable if it isn't already.
+          chmod +x coding_style/lambdananas || true
+
+      - name: Run coding style checks (lambdananas)
+        run: |
+          # Run the style checker and capture any output. If there is any
+          # output, treat it as a failure (so the job stops and the PR fails).
+          OUT=$(./coding_style/lambdananas . 2>&1 || true)
+          if [ -n "${OUT}" ]; then
+            echo "---- coding_style/lambdananas output ----"
+            echo "$OUT"
+            echo "----------------------------------------"
+            echo "Style checks produced output; failing CI."
+            exit 1
+          fi
   mirror:
     runs-on: ubuntu-latest
+    needs: compile
     if: |
       github.repository != 'EpitechPGE3-2025/G-FUN-500-NCE-5-2-glados-1'
       && github.event_name == 'push'
