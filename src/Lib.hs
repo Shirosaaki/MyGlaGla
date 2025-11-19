@@ -1,12 +1,9 @@
 {-
 -- EPITECH PROJECT, 2025
--- Main test
+-- lib module
 -- File description:
--- lib of the glory glados
+-- lib module
 -}
-module Lib
-    ( someFunc
-    ) where
+module Lib (SExpr(..), Ast(..), sexprToAST, evalAST) where
 
-someFunc :: IO ()
-someFunc = putStrLn "someFunc"
+import AST (SExpr(..), Ast(..), sexprToAST, evalAST)
