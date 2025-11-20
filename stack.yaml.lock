@@ -16,5 +16,4 @@ snapshots:
     sha256: 92becf9417de918f477cc79583b70700cbead6c5028fc4c4415f04fab5fb5354
     size: 726332
     url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/24/20.yaml
-  original:
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/24/20.yaml
+  original: lts-24.20

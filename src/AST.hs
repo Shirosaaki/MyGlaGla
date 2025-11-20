@@ -42,6 +42,7 @@ evalAST (AstInt n) = Just (AstInt n)
 evalAST (AstSymbol s) = Just (AstSymbol s)
 evalAST (Call (AstSymbol op) args) =
     evalOpCall op args
+evalAST (Call _ _) = Nothing
 evalAST (Define name val) = Just (Define name val)
 evalAST (AstList xs) = AstList <$> mapM evalAST xs
 evalAST (AstBool b) = Just (AstBool b)

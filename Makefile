@@ -23,3 +23,6 @@ re: fclean all
 
 run_test:
 	stack test
+
+test_coverage:
+	stack test --coverage
