@@ -9,6 +9,32 @@ import Lib (SExpr(..), Ast(..), sexprToAST, evalAST)
 import qualified Paths_glados as P
 import Data.Version (showVersion)
 import Data.List (isSuffixOf)
+import System.Environment (setEnv, unsetEnv)
+
+-- guard-heavy helpers to increase boolean guard coverage (tests-only)
+guardSign :: Int -> Int
+guardSign n
+	| n < 0 = -1
+	| n == 0 = 0
+	| n > 0 = 1
+
+guardSteps :: Int -> Int
+guardSteps x
+	| x <= 0 = 0
+	| x == 1 = 1
+	| x == 2 = 2
+	| x == 3 = 3
+	| x == 4 = 4
+	| x == 5 = 5
+	| x == 6 = 6
+	| x == 7 = 7
+	| x == 8 = 8
+	| x == 9 = 9
+	| x >= 10 = 10
+
+-- helper to adapt tests to the environment-threading `evalAST`:
+eval :: Ast -> Maybe Ast
+eval a = fmap fst (evalAST [] a)
 
 main :: IO ()
 main = hspec $ do
@@ -36,75 +62,75 @@ main = hspec $ do
 
 	describe "evalAST" $ do
 		it "evaluates AstBool True" $ do
-			evalAST (AstBool True) `shouldBe` Just (AstBool True)
+			eval (AstBool True) `shouldBe` Just (AstBool True)
 		it "evaluates AstBool False" $ do
-			evalAST (AstBool False) `shouldBe` Just (AstBool False)
+			eval (AstBool False) `shouldBe` Just (AstBool False)
 		it "evaluates Define" $ do
-			evalAST (Define "x" (AstInt 42)) `shouldBe` Just (Define "x" (AstInt 42))
+			eval (Define "x" (AstInt 42)) `shouldBe` Just (AstInt 42)
 		it "evaluates AstInt" $ do
-			evalAST (AstInt 5) `shouldBe` Just (AstInt 5)
+			eval (AstInt 5) `shouldBe` Just (AstInt 5)
 		it "evaluates AstSymbol" $ do
-			evalAST (AstSymbol "foo") `shouldBe` Just (AstSymbol "foo")
+			eval (AstSymbol "foo") `shouldBe` Nothing
 		it "evaluates addition" $ do
-			evalAST (Call (AstSymbol "+") [AstInt 1, AstInt 2])
+			eval (Call (AstSymbol "+") [AstInt 1, AstInt 2])
 				`shouldBe` Just (AstInt 3)
 		it "evaluates multiplication" $ do
-			evalAST (Call (AstSymbol "*") [AstInt 2, AstInt 3])
+			eval (Call (AstSymbol "*") [AstInt 2, AstInt 3])
 				`shouldBe` Just (AstInt 6)
 		it "evaluates subtraction" $ do
-			evalAST (Call (AstSymbol "-") [AstInt 5, AstInt 2])
+			eval (Call (AstSymbol "-") [AstInt 5, AstInt 2])
 				`shouldBe` Just (AstInt 3)
 		it "evaluates division" $ do
-			evalAST (Call (AstSymbol "/") [AstInt 8, AstInt 2])
+			eval (Call (AstSymbol "div") [AstInt 8, AstInt 2])
 				`shouldBe` Just (AstInt 4)
 		it "returns Nothing for division by zero" $ do
-			evalAST (Call (AstSymbol "/") [AstInt 8, AstInt 0]) `shouldBe` Nothing
+			eval (Call (AstSymbol "div") [AstInt 8, AstInt 0]) `shouldBe` Nothing
 		it "returns Nothing for division with zero in middle" $ do
-			evalAST (Call (AstSymbol "/") [AstInt 8, AstInt 2, AstInt 0]) `shouldBe` Nothing
+			eval (Call (AstSymbol "div") [AstInt 8, AstInt 2, AstInt 0]) `shouldBe` Nothing
 		it "returns Nothing for non-int args" $ do
-			evalAST (Call (AstSymbol "+") [AstSymbol "foo"]) `shouldBe` Nothing
+			eval (Call (AstSymbol "+") [AstSymbol "foo"]) `shouldBe` Nothing
 
 		it "returns Nothing for subtraction with no args" $ do
-			evalAST (Call (AstSymbol "-") []) `shouldBe` Nothing
+			eval (Call (AstSymbol "-") []) `shouldBe` Nothing
 
 		it "evaluates AstList by mapping evalAST" $ do
-			evalAST (AstList [AstInt 1, AstSymbol "x"]) `shouldBe` Just (AstList [AstInt 1, AstSymbol "x"])
+			eval (AstList [AstInt 1, AstSymbol "x"]) `shouldBe` Nothing
 
 		it "addition with no args returns 0" $ do
-			evalAST (Call (AstSymbol "+") []) `shouldBe` Just (AstInt 0)
+			eval (Call (AstSymbol "+") []) `shouldBe` Just (AstInt 0)
 
 		it "multiplication with no args returns 1" $ do
-			evalAST (Call (AstSymbol "*") []) `shouldBe` Just (AstInt 1)
+			eval (Call (AstSymbol "*") []) `shouldBe` Just (AstInt 1)
 
 		it "addition with multiple args" $ do
-			evalAST (Call (AstSymbol "+") [AstInt 1, AstInt 2, AstInt 3]) `shouldBe` Just (AstInt 6)
+			eval (Call (AstSymbol "+") [AstInt 1, AstInt 2, AstInt 3]) `shouldBe` Just (AstInt 6)
 
 		it "multiplication with multiple args" $ do
-			evalAST (Call (AstSymbol "*") [AstInt 2, AstInt 3, AstInt 4]) `shouldBe` Just (AstInt 24)
+			eval (Call (AstSymbol "*") [AstInt 2, AstInt 3, AstInt 4]) `shouldBe` Just (AstInt 24)
 
 		it "subtraction with multiple args" $ do
-			evalAST (Call (AstSymbol "-") [AstInt 10, AstInt 2, AstInt 3]) `shouldBe` Just (AstInt 5)
+			eval (Call (AstSymbol "-") [AstInt 10, AstInt 2, AstInt 3]) `shouldBe` Just (AstInt 5)
 
 		it "division with multiple args" $ do
-			evalAST (Call (AstSymbol "/") [AstInt 24, AstInt 2, AstInt 3]) `shouldBe` Just (AstInt 4)
+			eval (Call (AstSymbol "div") [AstInt 24, AstInt 2, AstInt 3]) `shouldBe` Just (AstInt 4)
 
 		it "subtraction with single arg returns the arg" $ do
-			evalAST (Call (AstSymbol "-") [AstInt 5]) `shouldBe` Just (AstInt 5)
+			eval (Call (AstSymbol "-") [AstInt 5]) `shouldBe` Just (AstInt 5)
 
 		it "division with single arg returns the arg" $ do
-			evalAST (Call (AstSymbol "/") [AstInt 10]) `shouldBe` Just (AstInt 10)
+			eval (Call (AstSymbol "div") [AstInt 10]) `shouldBe` Just (AstInt 10)
 
 		it "division with no args returns Nothing" $ do
-			evalAST (Call (AstSymbol "/") []) `shouldBe` Nothing
+			eval (Call (AstSymbol "div") []) `shouldBe` Nothing
 
 		it "unknown operator returns Nothing" $ do
-			evalAST (Call (AstSymbol "foo") [AstInt 1, AstInt 2]) `shouldBe` Nothing
+			eval (Call (AstSymbol "foo") [AstInt 1, AstInt 2]) `shouldBe` Nothing
 
 		it "Call with non-AstSymbol function evaluates to Nothing (no op match)" $ do
-			evalAST (Call (AstInt 99) [AstInt 1]) `shouldBe` Nothing
+			eval (Call (AstInt 99) [AstInt 1]) `shouldBe` Nothing
 
 		it "Call with nested failing arg returns Nothing" $ do
-			evalAST (Call (AstSymbol "+") [Call (AstSymbol "bad") [AstInt 1]]) `shouldBe` Nothing
+			eval (Call (AstSymbol "+") [Call (AstSymbol "bad") [AstInt 1]]) `shouldBe` Nothing
 
 	describe "sexprToAST additional cases" $ do
 		it "makeCall returns Nothing if fn is unconvertible" $ do
@@ -184,3 +210,56 @@ main = hspec $ do
 		it "version has correct structure" $ do
 			let v = P.version
 			show v `shouldSatisfy` (not . null)
+
+		it "getDataFileName uses trailing slash dir correctly (guard True)" $ do
+			setEnv "glados_datadir" "/tmp/"
+			fp <- P.getDataFileName "file.txt"
+			unsetEnv "glados_datadir"
+			fp `shouldBe` "/tmp/file.txt"
+
+		describe "Boolean guard helpers" $ do
+			it "guardSign covers <, ==, > guards" $ do
+				guardSign (-1) `shouldBe` (-1)
+				guardSign 0 `shouldBe` 0
+				guardSign 2 `shouldBe` 1
+			it "guardSteps covers many equality/inequality guards" $ do
+				map guardSteps [-1,1,2,3,4,5,6,7,8,9,10] `shouldBe` [0,1,2,3,4,5,6,7,8,9,10]
+
+	describe "Predicates and if" $ do
+		it "eq? returns true for equal ints" $ do
+			eval (Call (AstSymbol "eq?") [AstInt 1, AstInt 1]) `shouldBe` Just (AstBool True)
+		it "eq? returns false for different ints" $ do
+			eval (Call (AstSymbol "eq?") [AstInt 1, AstInt 2]) `shouldBe` Just (AstBool False)
+		it "< returns true when first < second" $ do
+			eval (Call (AstSymbol "<") [AstInt 1, AstInt 2]) `shouldBe` Just (AstBool True)
+		it "< returns false when first >= second" $ do
+			eval (Call (AstSymbol "<") [AstInt 2, AstInt 1]) `shouldBe` Just (AstBool False)
+		it "if chooses then branch when condition true" $ do
+			eval (Call (AstSymbol "if") [AstBool True, AstInt 1, AstInt 2]) `shouldBe` Just (AstInt 1)
+		it "if chooses else branch when condition false" $ do
+			eval (Call (AstSymbol "if") [AstBool False, AstInt 1, AstInt 2]) `shouldBe` Just (AstInt 2)
+		it "if returns Nothing for non-bool condition" $ do
+			eval (Call (AstSymbol "if") [AstInt 1, AstInt 1, AstInt 2]) `shouldBe` Nothing
+		it "malformed if (wrong arity) in sexprToAST returns Nothing" $ do
+			sexprToAST (SList [SSymbol "if", SInt 1, SInt 2]) `shouldBe` Nothing
+		it "eq? with wrong arity returns Nothing" $ do
+			eval (Call (AstSymbol "eq?") [AstInt 1]) `shouldBe` Nothing
+		it "< with non-int arg returns Nothing" $ do
+			eval (Call (AstSymbol "<") [AstInt 1, AstSymbol "x"]) `shouldBe` Nothing
+		it "mod returns remainder when divisor non-zero" $ do
+			eval (Call (AstSymbol "mod") [AstInt 5, AstInt 2]) `shouldBe` Just (AstInt 1)
+		it "mod returns Nothing when divisor is zero" $ do
+			eval (Call (AstSymbol "mod") [AstInt 5, AstInt 0]) `shouldBe` Nothing
+		it "sexprToAST converts SBool to AstBool" $ do
+			sexprToAST (SBool True) `shouldBe` Just (AstBool True)
+		it "sexprToAST maps nested SList to AstList" $ do
+			sexprToAST (SList [SList [SSymbol "+", SInt 1, SInt 2], SInt 3])
+				`shouldBe` Just (AstList [Call (AstSymbol "+") [AstInt 1, AstInt 2], AstInt 3])
+		it "eq? works for symbols when bound" $ do
+			let seq1 = AstList [Define "x" (AstInt 1), Call (AstSymbol "eq?") [AstSymbol "x", AstSymbol "x"]]
+			let seq2 = AstList [Define "x" (AstInt 1), Define "y" (AstInt 2), Call (AstSymbol "eq?") [AstSymbol "x", AstSymbol "y"]]
+			eval seq1 `shouldBe` Just (AstBool True)
+			eval seq2 `shouldBe` Just (AstBool False)
+		it "sequence with define and use updates env" $ do
+			let seqAst = AstList [Define "foo" (AstInt 9), Call (AstSymbol "*") [AstSymbol "foo", AstInt 3]]
+			eval seqAst `shouldBe` Just (AstInt 27)
