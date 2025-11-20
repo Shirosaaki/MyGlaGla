@@ -255,6 +255,27 @@ main = hspec $ do
 		it "sexprToAST maps nested SList to AstList" $ do
 			sexprToAST (SList [SList [SSymbol "+", SInt 1, SInt 2], SInt 3])
 				`shouldBe` Just (AstList [Call (AstSymbol "+") [AstInt 1, AstInt 2], AstInt 3])
+
+		describe "Lambda / define-function" $ do
+			it "parses and evaluates function-style define and call (>)" $ do
+				let defineList = SList [SSymbol "define", SList [SSymbol ">", SSymbol "a", SSymbol "b"],
+							SList [SSymbol "if", SList [SSymbol "eq?", SSymbol "a", SSymbol "b"], SBool False,
+								SList [SSymbol "if", SList [SSymbol "<", SSymbol "a", SSymbol "b"], SBool False, SBool True]]]
+				let callList = SList [SSymbol ">", SInt 10, SInt (-2)]
+				let sexpr = SList [defineList, callList]
+				case sexprToAST sexpr of
+					Just ast -> eval ast `shouldBe` Just (AstBool True)
+					Nothing -> expectationFailure "Parsing error for function-style define"
+
+			it "defines recursive factorial and evaluates fact 5" $ do
+				let defineFact = SList [SSymbol "define", SList [SSymbol "fact", SSymbol "x"],
+							SList [SSymbol "if", SList [SSymbol "eq?", SSymbol "x", SInt 1], SInt 1,
+							SList [SSymbol "*", SSymbol "x", SList [SSymbol "fact", SList [SSymbol "-", SSymbol "x", SInt 1]]]]]
+				let callFact = SList [SSymbol "fact", SInt 5]
+				let sexpr = SList [defineFact, callFact]
+				case sexprToAST sexpr of
+					Just ast -> eval ast `shouldBe` Just (AstInt 120)
+					Nothing -> expectationFailure "Parsing error for factorial define"
 		it "eq? works for symbols when bound" $ do
 			let seq1 = AstList [Define "x" (AstInt 1), Call (AstSymbol "eq?") [AstSymbol "x", AstSymbol "x"]]
 			let seq2 = AstList [Define "x" (AstInt 1), Define "y" (AstInt 2), Call (AstSymbol "eq?") [AstSymbol "x", AstSymbol "y"]]
