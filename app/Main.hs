@@ -30,5 +30,8 @@ printResult sexpr =
 printEval :: Ast -> IO ()
 printEval ast =
     case evalAST [] ast of
+        Just (AstInt n, _) -> print n
+        Just (AstBool True, _) -> putStrLn "#t"
+        Just (AstBool False, _) -> putStrLn "#f"
         Just (result, _) -> print result
         Nothing     -> putStrLn "Evaluation error"
