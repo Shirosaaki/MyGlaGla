@@ -10,8 +10,7 @@ import Lib (SExpr(..), Ast(..), parseSExpr, sexprToAST, evalAST)
 
 main :: IO ()
 main = do
-    testExpr "(define (add a b) (+ a b))"
-    testExpr "(add 3 4)"
+    testExpr "(define (add a b) (+ a b)) (add 5 7)"
     testExpr "(+ 1 2)"
     
 testExpr :: String -> IO ()
@@ -20,6 +19,7 @@ testExpr input = do
     case parseSExpr input of
         Just sexpr -> do
             putStrLn $ "Parsed: " ++ show sexpr
+            printResult sexpr
         Nothing -> putStrLn "Parser error"
 
 printResult :: SExpr -> IO ()
@@ -35,5 +35,6 @@ printEval ast =
         Just (AstInt n, _) -> print n
         Just (AstBool True, _) -> putStrLn "#t"
         Just (AstBool False, _) -> putStrLn "#f"
+        Just (AstVoid, _) -> return ()
         Just (result, _) -> print result
         Nothing     -> putStrLn "Evaluation error"

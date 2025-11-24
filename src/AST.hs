@@ -20,6 +20,7 @@ data Ast = Define { defName :: String, defValue :: Ast }
             | Call Ast [Ast]
             | AstLambda [String] Ast
             | AstClosure [String] Ast Env
+            | AstVoid  -- represents an undefined/void value (for define statements)
             deriving (Show, Eq)
 
 type Env = [(String, Ast)]
@@ -78,12 +79,14 @@ evalAST env (AstSymbol s) =
         Just v -> Just (v, env)
         Nothing -> Nothing
 evalAST env (Define name val) =
-    case evalAST env val of
-        Just (v@(AstClosure params body closureEnv), env') ->
-            let recClos = AstClosure params body ((name, recClos) : closureEnv)
-            in Just (recClos, (name, recClos) : env')
-        Just (v, env') -> Just (v, (name, v) : env')
-        Nothing -> Nothing
+    case val of
+        AstLambda params body ->
+            let updatedEnv = (name, AstClosure params body updatedEnv) : env
+            in Just (AstVoid, updatedEnv)
+        _ ->
+            case evalAST env val of
+                Just (v, env') -> Just (AstVoid, (name, v) : env')
+                Nothing -> Nothing
 evalAST env (AstLambda params body) =
     Just (AstClosure params body env, env)
 evalAST env (AstList xs) = evalSeq env xs
