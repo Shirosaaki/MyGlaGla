@@ -66,7 +66,7 @@ main = hspec $ do
 		it "evaluates AstBool False" $ do
 			eval (AstBool False) `shouldBe` Just (AstBool False)
 		it "evaluates Define" $ do
-			eval (Define "x" (AstInt 42)) `shouldBe` Just (AstInt 42)
+			eval (Define "x" (AstInt 42)) `shouldBe` Just (AstVoid)
 		it "evaluates AstInt" $ do
 			eval (AstInt 5) `shouldBe` Just (AstInt 5)
 		it "evaluates AstSymbol" $ do
