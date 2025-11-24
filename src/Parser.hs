@@ -5,7 +5,7 @@
 -- Parsing with Megaparsec
 -}
 
-module Parser (parseSExpr, parseSExprEither) where
+module Parser (parseSExpr, parseSExprEither, parseSExprMultiple, parseSExprMultipleEither) where
 
 import AST (SExpr(..))
 import Data.Void (Void)
@@ -25,6 +25,15 @@ parseSExprEither src =
 parseSExpr :: String -> Maybe SExpr
 parseSExpr s = either (const Nothing) Just (parseSExprEither s)
 
+parseSExprMultiple :: String -> Maybe [SExpr]
+parseSExprMultiple s = either (const Nothing) Just (parseSExprMultipleEither s)
+
+parseSExprMultipleEither :: String -> Either String [SExpr]
+parseSExprMultipleEither src =
+  case parse (spaceConsumer *> many (sexpr <* spaceConsumer) <* eof) "<input>" src of
+    Left e  -> Left (errorBundlePretty e)
+    Right v -> Right v
+
 sexpr :: Parser SExpr
 sexpr = spaceConsumer *> (atom <|> list) <* spaceConsumer
 
@@ -39,7 +48,11 @@ intAtom :: Parser SExpr
 intAtom = SInt <$> L.signed spaceConsumer L.decimal
 
 symbolAtom :: Parser SExpr
-symbolAtom = SSymbol <$> some (oneOf "+-*/<>=!?abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
+symbolAtom = SSymbol <$> some (oneOf validSymbolChars)
+  where
+    validSymbolChars = "+-*/<>=!?" ++
+                       "abcdefghijklmnopqrstuvwxyz" ++
+                       "ABCDEFGHIJKLMNOPQRSTUVWXYZ_"
 
 list :: Parser SExpr
 list = do
