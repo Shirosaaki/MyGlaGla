@@ -45,11 +45,6 @@ sexprToAST (SList [SSymbol "if", cond, thenExpr, elseExpr]) =
         (Just c, Just t, Just e) -> Just (Call (AstSymbol "if") [c, t, e])
         _ -> Nothing
 sexprToAST (SList (SSymbol "if" : _)) = Nothing
-sexprToAST (SList (fn:args)) =
-    case fn of
-        SSymbol _ -> makeCall fn args
-        SList _  -> AstList <$> mapM sexprToAST (fn:args)
-        _        -> makeCall fn args
 sexprToAST (SList [SSymbol "lambda", SList params, body]) =
     case mapM paramName params of
         Just paramNames ->
@@ -57,6 +52,11 @@ sexprToAST (SList [SSymbol "lambda", SList params, body]) =
                 Just bodyAst -> Just (AstLambda paramNames bodyAst)
                 Nothing -> Nothing
         Nothing -> Nothing
+sexprToAST (SList (fn:args)) =
+    case fn of
+        SSymbol _ -> makeCall fn args
+        SList _  -> makeCall fn args
+        _        -> makeCall fn args
 
 paramName :: SExpr -> Maybe String
 paramName (SSymbol s) = Just s
@@ -74,6 +74,8 @@ makeCallArgs fnAst args =
 evalAST :: Env -> Ast -> Maybe (Ast, Env)
 evalAST env (AstInt n) = Just (AstInt n, env)
 evalAST env (AstBool b) = Just (AstBool b, env)
+evalAST env AstVoid = Just (AstVoid, env)
+evalAST env closure@(AstClosure _ _ _) = Just (closure, env)
 evalAST env (AstSymbol s) =
     case lookup s env of
         Just v -> Just (v, env)
@@ -97,16 +99,22 @@ evalAST env (AstList xs) = evalSeq env xs
         case evalAST e x of
             Just (_, e') -> evalSeq e' xs'
             Nothing -> Nothing
-evalAST env (Call (AstSymbol op) args) = evalOpCall env op args
-evalAST _ (Call _ _) = Nothing
+evalAST env (Call fnAst args) =
+    case fnAst of
+        AstSymbol op -> evalOpCall env op args
+        _ -> 
+            case evalAST env fnAst of
+                Just (closure@(AstClosure _ _ _), _) ->
+                    evalClosureCall env args closure
+                _ -> Nothing
 
 evalClosureCall :: Env -> [Ast] -> Ast -> Maybe (Ast, Env)
 evalClosureCall env args (AstClosure params body closureEnv) =
     do
-        (argVals, env') <- evalArgs env args
+        (argVals, _) <- evalArgs env args
         if length params /= length argVals then Nothing else
             case evalAST (zip params argVals ++ closureEnv) body of
-                Just (res, _) -> Just (res, env')
+                Just (res, _) -> Just (res, env)
                 Nothing -> Nothing
 evalClosureCall _ _ _ = Nothing
 
@@ -157,9 +165,7 @@ getInt _ = Nothing
 
 evalOp :: String -> [Int] -> Maybe Ast
 evalOp "+" ns = Just (AstInt (sum ns))
-evalOp "+" _ = Nothing
 evalOp "*" ns = Just (AstInt (product ns))
-evalOp "*" _ = Nothing
 evalOp "-" (x:xs) = Just (AstInt (foldl (-) x xs))
 evalOp "-" _ = Nothing
 evalOp "div" (x:xs)
