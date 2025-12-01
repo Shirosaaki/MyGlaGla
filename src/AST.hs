@@ -20,7 +20,7 @@ data Ast = Define { defName :: String, defValue :: Ast }
             | Call Ast [Ast]
             | AstLambda [String] Ast
             | AstClosure [String] Ast Env
-            | AstVoid  -- represents an undefined/void value (for define statements)
+            | AstVoid  -- represents an undefined/void value (for define)
             deriving (Show, Eq)
 
 type Env = [(String, Ast)]
@@ -55,7 +55,8 @@ sexprToAST (SList [SSymbol "lambda", SList params, body]) =
 sexprToAST (SList (fn:args)) =
     case fn of
         SSymbol _ -> makeCall fn args
-        SList _  -> makeCall fn args
+        SList (SSymbol "lambda" : _) -> makeCall fn args
+        SList _  -> AstList <$> mapM sexprToAST (fn:args)
         _        -> makeCall fn args
 
 paramName :: SExpr -> Maybe String
