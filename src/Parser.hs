@@ -39,22 +39,23 @@ sexpr :: Parser SExpr
 sexpr = spaceConsumer *> (atom <|> list) <* spaceConsumer
 
 atom :: Parser SExpr
-atom = boolAtom <|> intAtom <|> symbolAtom
+atom = boolAtom <|> try intAtom <|> symbolAtom
 
 boolAtom :: Parser SExpr
 boolAtom = (string "#t" >> pure (SBool True))
        <|> (string "#f" >> pure (SBool False))
 
+negativeInt :: Parser Int
+negativeInt = char '-' >> some digitChar >>= \d -> return (-(read d))
+
+positiveInt :: Parser Int
+positiveInt = char '+' >> some digitChar >>= \d -> return (read d)
+
+unsignedInt :: Parser Int
+unsignedInt = read <$> some digitChar
+
 intAtom :: Parser SExpr
-intAtom = SInt <$> (try negativeInt <|> positiveInt)
-  where
-    negativeInt = do
-      char '-'
-      digits <- some digitChar
-      return (-(read digits))
-    positiveInt = do
-      optional (char '+')
-      read <$> some digitChar
+intAtom = SInt <$> (try negativeInt <|> try positiveInt <|> unsignedInt)
 
 symbolAtom :: Parser SExpr
 symbolAtom = SSymbol <$> some (oneOf validSymbolChars)
