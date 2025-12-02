@@ -6,6 +6,7 @@
 -}
 import Test.Hspec
 import Lib (SExpr(..), Ast(..), sexprToAST, evalAST)
+import qualified Generated.FilesSpec as FilesSpec
 import qualified Paths_glados as P
 import Data.Version (showVersion)
 import Data.List (isSuffixOf)
@@ -59,6 +60,8 @@ main = hspec $ do
 
 		it "returns Nothing when define name is not a symbol" $ do
 			sexprToAST (SList [SSymbol "define", SInt 1, SInt 2]) `shouldBe` Nothing
+
+		FilesSpec.spec
 
 	describe "evalAST" $ do
 		it "evaluates AstBool True" $ do
