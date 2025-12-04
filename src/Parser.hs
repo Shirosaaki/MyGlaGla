@@ -58,11 +58,15 @@ intAtom :: Parser SExpr
 intAtom = SInt <$> (try negativeInt <|> try positiveInt <|> unsignedInt)
 
 symbolAtom :: Parser SExpr
-symbolAtom = SSymbol <$> some (oneOf validSymbolChars)
+symbolAtom = do
+    first <- oneOf validFirstChars
+    rest <- many (oneOf validRestChars)
+    return $ SSymbol (first : rest)
   where
-    validSymbolChars = "+-*/<>=!?" ++
-                       "abcdefghijklmnopqrstuvwxyz" ++
-                       "ABCDEFGHIJKLMNOPQRSTUVWXYZ_"
+    validFirstChars = "+-*/<>=!?" ++
+                      "abcdefghijklmnopqrstuvwxyz" ++
+                      "ABCDEFGHIJKLMNOPQRSTUVWXYZ_"
+    validRestChars = validFirstChars ++ "0123456789"
 
 list :: Parser SExpr
 list = do
@@ -72,5 +76,13 @@ list = do
   char ')'
   return (SList xs)
 
+-- | Space consumer that also skips comments
+-- Comments in Scheme start with ';' and go to end of line
 spaceConsumer :: Parser ()
-spaceConsumer = L.space (void $ oneOf " \t\n") empty empty
+spaceConsumer = L.space
+  (void $ oneOf " \t\n\r")
+  lineComment
+  empty
+
+lineComment :: Parser ()
+lineComment = L.skipLineComment ";"

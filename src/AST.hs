@@ -4,7 +4,7 @@
 -- File description:
 -- file where the AST is defined
 -}
-module AST (SExpr(..), Ast(..), sexprToAST, evalAST) where
+module AST (SExpr(..), Ast(..), sexprToAST, evalAST, EvalResult) where
 
 data SExpr = SInt Int
             | SBool Bool
@@ -20,160 +20,203 @@ data Ast = Define { defName :: String, defValue :: Ast }
             | Call Ast [Ast]
             | AstLambda [String] Ast
             | AstClosure [String] Ast Env
-            | AstVoid  -- represents an undefined/void value (for define)
+            | AstVoid
             deriving (Show, Eq)
 
 type Env = [(String, Ast)]
+type EvalResult = Either String (Ast, Env)
 
-sexprToAST :: SExpr -> Maybe Ast
-sexprToAST (SSymbol s) = Just (AstSymbol s)
-sexprToAST (SInt n) = Just (AstInt n)
-sexprToAST (SBool b) = Just (AstBool b)
-sexprToAST (SList []) = Just (AstList [])
+sexprToAST :: SExpr -> Either String Ast
+sexprToAST (SSymbol s) = Right (AstSymbol s)
+sexprToAST (SInt n) = Right (AstInt n)
+sexprToAST (SBool b) = Right (AstBool b)
+sexprToAST (SList []) = Right (AstList [])
 sexprToAST (SList [SSymbol "define", SSymbol name, value]) =
     fmap (Define name) (sexprToAST value)
-sexprToAST (SList [SSymbol "define", SList (SSymbol name : params), value]) =
-    case mapM paramName params of
-        Just paramNames ->
+sexprToAST (SList [SSymbol "define", SList (SSymbol n : p), value]) =
+    case mapM paramNameE p of
+        Right pn ->
             case sexprToAST value of
-                Just bodAst -> Just (Define name (AstLambda paramNames bodAst))
-                Nothing -> Nothing
-        Nothing -> Nothing
-sexprToAST (SList (SSymbol "define" : _)) = Nothing
+                Right bodAst -> Right (Define n (AstLambda pn bodAst))
+                Left err -> Left err
+        Left err -> Left err
+sexprToAST (SList [SSymbol "define", SList [], _]) =
+    Left "define: missing function name"
+sexprToAST (SList [SSymbol "define", _, _]) =
+    Left "define: first argument must be a symbol or function signature"
+sexprToAST (SList [SSymbol "define", _]) =
+    Left "define: missing value"
+sexprToAST (SList [SSymbol "define"]) =
+    Left "define: missing symbol and value"
+sexprToAST (SList (SSymbol "define" : _)) =
+    Left "define: bad syntax"
 sexprToAST (SList [SSymbol "if", cond, thenExpr, elseExpr]) =
     case (sexprToAST cond, sexprToAST thenExpr, sexprToAST elseExpr) of
-        (Just c, Just t, Just e) -> Just (Call (AstSymbol "if") [c, t, e])
-        _ -> Nothing
-sexprToAST (SList (SSymbol "if" : _)) = Nothing
+        (Right c, Right t, Right e) -> Right (Call (AstSymbol "if") [c, t, e])
+        (Left err, _, _) -> Left err
+        (_, Left err, _) -> Left err
+        (_, _, Left err) -> Left err
+sexprToAST (SList [SSymbol "if", _, _]) = Left "if: missing else clause"
+sexprToAST (SList [SSymbol "if", _]) = Left "if: missing then and else clauses"
+sexprToAST (SList [SSymbol "if"]) = Left "if: missing condition"
+sexprToAST (SList (SSymbol "if" : _)) = Left "if: bad syntax"
 sexprToAST (SList [SSymbol "lambda", SList params, body]) =
-    case mapM paramName params of
-        Just paramNames ->
+    case mapM paramNameE params of
+        Right pn ->
             case sexprToAST body of
-                Just bodyAst -> Just (AstLambda paramNames bodyAst)
-                Nothing -> Nothing
-        Nothing -> Nothing
+                Right bodyAst -> Right (AstLambda pn bodyAst)
+                Left err -> Left err
+        Left err -> Left err
+sexprToAST (SList [SSymbol "lambda", _, _]) =
+    Left "lambda: parameters must be a list"
+sexprToAST (SList [SSymbol "lambda", _]) = Left "lambda: missing body"
+sexprToAST (SList [SSymbol "lambda"]) =
+    Left "lambda: missing parameters and body"
+sexprToAST (SList (SSymbol "lambda" : _)) = Left "lambda: bad syntax"
 sexprToAST (SList (fn:args)) =
     case fn of
         SSymbol _ -> makeCall fn args
         SList (SSymbol "lambda" : _) -> makeCall fn args
-        SList _  -> AstList <$> mapM sexprToAST (fn:args)
+        SList _  -> makeCall fn args
         _        -> makeCall fn args
 
-paramName :: SExpr -> Maybe String
-paramName (SSymbol s) = Just s
-paramName _ = Nothing
+paramNameE :: SExpr -> Either String String
+paramNameE (SSymbol s) = Right s
+paramNameE _ = Left "lambda: parameter must be a symbol"
 
-makeCall :: SExpr -> [SExpr] -> Maybe Ast
+makeCall :: SExpr -> [SExpr] -> Either String Ast
 makeCall fn args =
     case sexprToAST fn of
-        Nothing -> Nothing
-        Just fnAst -> makeCallArgs fnAst args
+        Left err -> Left err
+        Right fnAst -> makeCallArgs fnAst args
 
-makeCallArgs :: Ast -> [SExpr] -> Maybe Ast
+makeCallArgs :: Ast -> [SExpr] -> Either String Ast
 makeCallArgs fnAst args =
     fmap (Call fnAst) (mapM sexprToAST args)
-evalAST :: Env -> Ast -> Maybe (Ast, Env)
-evalAST env (AstInt n) = Just (AstInt n, env)
-evalAST env (AstBool b) = Just (AstBool b, env)
-evalAST env AstVoid = Just (AstVoid, env)
-evalAST env closure@(AstClosure _ _ _) = Just (closure, env)
+
+evalAST :: Env -> Ast -> EvalResult
+evalAST env (AstInt n) = Right (AstInt n, env)
+evalAST env (AstBool b) = Right (AstBool b, env)
+evalAST env AstVoid = Right (AstVoid, env)
+evalAST env closure@(AstClosure _ _ _) = Right (closure, env)
 evalAST env (AstSymbol s) =
     case lookup s env of
-        Just v -> Just (v, env)
-        Nothing -> Nothing
+        Just v -> Right (v, env)
+        Nothing -> Left ("variable " ++ s ++ " is not bound")
 evalAST env (Define name val) =
     case val of
         AstLambda params body ->
             let updatedEnv = (name, AstClosure params body updatedEnv) : env
-            in Just (AstVoid, updatedEnv)
+            in Right (AstVoid, updatedEnv)
         _ ->
             case evalAST env val of
-                Just (v, env') -> Just (AstVoid, (name, v) : env')
-                Nothing -> Nothing
+                Right (v, env') -> Right (AstVoid, (name, v) : env')
+                Left err -> Left err
 evalAST env (AstLambda params body) =
-    Just (AstClosure params body env, env)
+    Right (AstClosure params body env, env)
 evalAST env (AstList xs) = evalSeq env xs
   where
-    evalSeq e [] = Just (AstList [], e)
+    evalSeq e [] = Right (AstList [], e)
     evalSeq e [x] = evalAST e x
     evalSeq e (x:xs') =
         case evalAST e x of
-            Just (_, e') -> evalSeq e' xs'
-            Nothing -> Nothing
+            Right (_, e') -> evalSeq e' xs'
+            Left err -> Left err
 evalAST env (Call fnAst args) =
     case fnAst of
         AstSymbol op -> evalOpCall env op args
-        _ -> 
+        _ ->
             case evalAST env fnAst of
-                Just (closure@(AstClosure _ _ _), _) ->
+                Right (closure@(AstClosure _ _ _), _) ->
                     evalClosureCall env args closure
-                _ -> Nothing
+                Right (other, _) ->
+                    Left ("attempt to apply non-procedure: " ++ showAst other)
+                Left err -> Left err
 
-evalClosureCall :: Env -> [Ast] -> Ast -> Maybe (Ast, Env)
+showAst :: Ast -> String
+showAst (AstInt n) = show n
+showAst (AstBool True) = "#t"
+showAst (AstBool False) = "#f"
+showAst (AstSymbol s) = s
+showAst (AstClosure _ _ _) = "#<procedure>"
+showAst AstVoid = "#<void>"
+showAst _ = "<unknown>"
+
+evalClosureCall :: Env -> [Ast] -> Ast -> EvalResult
 evalClosureCall env args (AstClosure params body closureEnv) =
-    do
-        (argVals, _) <- evalArgs env args
-        if length params /= length argVals then Nothing else
-            case evalAST (zip params argVals ++ closureEnv) body of
-                Just (res, _) -> Just (res, env)
-                Nothing -> Nothing
-evalClosureCall _ _ _ = Nothing
+    case evalArgs env args of
+        Left err -> Left err
+        Right (argVals, _) ->
+            if length params /= length argVals
+            then Left ("wrong number of arguments: expected " ++
+                      show (length params) ++ ", got " ++ show (length argVals))
+            else case evalAST (zip params argVals ++ closureEnv) body of
+                Right (res, _) -> Right (res, env)
+                Left err -> Left err
+evalClosureCall _ _ _ = Left "internal error: not a closure"
 
-evalBuiltinOp :: Env -> String -> [Ast] -> Maybe (Ast, Env)
+evalBuiltinOp :: Env -> String -> [Ast] -> EvalResult
 evalBuiltinOp env op args =
     case evalArgs env args of
-        Just (argVals, env') ->
+        Right (argVals, env') ->
             case mapM getInt argVals of
-                Nothing -> Nothing
+                Nothing -> Left (op ++ ": wrong type argument")
                 Just ns -> case evalOp op ns of
-                              Just (AstInt n) -> Just (AstInt n, env')
-                              _ -> Nothing
-        Nothing -> Nothing
+                              Right (AstInt n) -> Right (AstInt n, env')
+                              Left err -> Left err
+                              _ -> Left (op ++ ": unexpected result")
+        Left err -> Left err
 
-evalOpCall :: Env -> String -> [Ast] -> Maybe (Ast, Env)
+evalOpCall :: Env -> String -> [Ast] -> EvalResult
 evalOpCall env "if" [cond, thenExpr, elseExpr] =
     case evalAST env cond of
-        Just (AstBool True, env1) -> evalAST env1 thenExpr
-        Just (AstBool False, env1) -> evalAST env1 elseExpr
-        _ -> Nothing
-evalOpCall _ "if" _ = Nothing
+        Right (AstBool True, env1) -> evalAST env1 thenExpr
+        Right (AstBool False, env1) -> evalAST env1 elseExpr
+        Right (_, _) -> Left "if: condition must be a boolean"
+        Left err -> Left err
+evalOpCall _ "if" _ = Left "if: bad syntax"
 evalOpCall env "eq?" args =
     case evalArgs env args of
-        Just ( [a, b], env') -> Just (AstBool (a == b), env')
-        _ -> Nothing
+        Right ([a, b], env') -> Right (AstBool (a == b), env')
+        Right (_, _) -> Left "eq?: expected 2 arguments"
+        Left err -> Left err
 evalOpCall env "<" args =
     case evalArgs env args of
-        Just ([AstInt a, AstInt b], env') -> Just (AstBool (a < b), env')
-        _ -> Nothing
+        Right ([AstInt a, AstInt b], env') -> Right (AstBool (a < b), env')
+        Right ([_, _], _) -> Left "<: arguments must be integers"
+        Right (_, _) -> Left "<: expected 2 arguments"
+        Left err -> Left err
 evalOpCall env op args =
     case lookup op env of
         Just closure@(AstClosure _ _ _) -> evalClosureCall env args closure
-        _ -> evalBuiltinOp env op args
+        Just _ -> Left (op ++ " is not a procedure")
+        Nothing -> evalBuiltinOp env op args
 
-evalArgs :: Env -> [Ast] -> Maybe ([Ast], Env)
-evalArgs env [] = Just ([], env)
+evalArgs :: Env -> [Ast] -> Either String ([Ast], Env)
+evalArgs env [] = Right ([], env)
 evalArgs env (x:xs) =
     case evalAST env x of
-        Just (v, env1) ->
+        Right (v, env1) ->
             case evalArgs env1 xs of
-                Just (vs, env2) -> Just (v:vs, env2)
-                Nothing -> Nothing
-        Nothing -> Nothing
+                Right (vs, env2) -> Right (v:vs, env2)
+                Left err -> Left err
+        Left err -> Left err
 
 getInt :: Ast -> Maybe Int
 getInt (AstInt n) = Just n
 getInt _ = Nothing
 
-evalOp :: String -> [Int] -> Maybe Ast
-evalOp "+" ns = Just (AstInt (sum ns))
-evalOp "*" ns = Just (AstInt (product ns))
-evalOp "-" (x:xs) = Just (AstInt (foldl (-) x xs))
-evalOp "-" _ = Nothing
+evalOp :: String -> [Int] -> Either String Ast
+evalOp "+" ns = Right (AstInt (sum ns))
+evalOp "*" ns = Right (AstInt (product ns))
+evalOp "-" [] = Left "-: expected at least 1 argument"
+evalOp "-" (x:xs) = Right (AstInt (foldl (-) x xs))
+evalOp "div" [] = Left "div: expected at least 1 argument"
+evalOp "div" [_] = Left "div: expected at least 2 arguments"
 evalOp "div" (x:xs)
-    | all (/= 0) xs = Just (AstInt (foldl div x xs))
-    | otherwise = Nothing
-evalOp "div" _ = Nothing
-evalOp "mod" [x, y]
-    | y /= 0 = Just (AstInt (mod x y))
-    | otherwise = Nothing
-evalOp _ _ = Nothing
+    | any (== 0) xs = Left "div: division by zero"
+    | otherwise = Right (AstInt (foldl div x xs))
+evalOp "mod" [_, 0] = Left "mod: division by zero"
+evalOp "mod" [x, y] = Right (AstInt (mod x y))
+evalOp "mod" _ = Left "mod: expected exactly 2 arguments"
+evalOp op _ = Left ("unknown procedure: " ++ op)

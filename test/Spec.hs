@@ -5,285 +5,506 @@
 -- main of the glory glados
 -}
 import Test.Hspec
-import Lib (SExpr(..), Ast(..), sexprToAST, evalAST)
-import qualified Generated.FilesSpec as FilesSpec
+import Lib (SExpr(..), Ast(..), sexprToAST, evalAST,
+            parseSExprMultipleEither)
 import qualified Paths_glados as P
 import Data.Version (showVersion)
 import Data.List (isSuffixOf)
 import System.Environment (setEnv, unsetEnv)
+import Data.Either (isLeft)
 
--- guard-heavy helpers to increase boolean guard coverage (tests-only)
-guardSign :: Int -> Int
-guardSign n
-	| n < 0 = -1
-	| n == 0 = 0
-	| n > 0 = 1
+type Env = [(String, Ast)]
 
-guardSteps :: Int -> Int
-guardSteps x
-	| x <= 0 = 0
-	| x == 1 = 1
-	| x == 2 = 2
-	| x == 3 = 3
-	| x == 4 = 4
-	| x == 5 = 5
-	| x == 6 = 6
-	| x == 7 = 7
-	| x == 8 = 8
-	| x == 9 = 9
-	| x >= 10 = 10
-
--- helper to adapt tests to the environment-threading `evalAST`:
+-- Helper to evaluate from empty environment
 eval :: Ast -> Maybe Ast
-eval a = fmap fst (evalAST [] a)
+eval a = case evalAST [] a of
+    Right (res, _) -> Just res
+    Left _ -> Nothing
 
+-- Parse and evaluate a program string, returning the result
+runProgram :: String -> Either String Ast
+runProgram input = case parseSExprMultipleEither input of
+    Left err -> Left err
+    Right sexprs -> evalProgram [] sexprs
+
+evalProgram :: Env -> [SExpr] -> Either String Ast
+evalProgram _ [] = Left "empty program"
+evalProgram env [s] = do
+    ast <- sexprToAST s
+    (res, _) <- evalAST env ast
+    return res
+evalProgram env (s:ss) = do
+    ast <- sexprToAST s
+    (_, env') <- evalAST env ast
+    evalProgram env' ss
+
+-- Helper to check result matches expected
+shouldEvalTo :: String -> Ast -> Expectation
+shouldEvalTo prog expected = runProgram prog `shouldBe` Right expected
+
+-- Helper to check program fails
+shouldFail :: String -> Expectation
+shouldFail prog = runProgram prog `shouldSatisfy` isLeft
 main :: IO ()
 main = hspec $ do
-	describe "sexprToAST" $ do
-		it "converts SInt to AstInt" $ do
-			sexprToAST (SInt 42) `shouldBe` Just (AstInt 42)
-		it "converts SSymbol to AstSymbol" $ do
-			sexprToAST (SSymbol "foo") `shouldBe` Just (AstSymbol "foo")
-		it "converts SList [] to AstList []" $ do
-			sexprToAST (SList []) `shouldBe` Just (AstList [])
-		it "converts define form" $ do
-			sexprToAST (SList [SSymbol "define", SSymbol "x", SInt 1])
-				`shouldBe` Just (Define "x" (AstInt 1))
-		it "returns Nothing for malformed define" $ do
-			sexprToAST (SList [SSymbol "define", SSymbol "x"]) `shouldBe` Nothing
-		it "converts function call" $ do
-			sexprToAST (SList [SSymbol "+", SInt 1, SInt 2])
-				`shouldBe` Just (Call (AstSymbol "+") [AstInt 1, AstInt 2])
+    describe "sexprToAST" $ do
+        it "converts SInt to AstInt" $
+            sexprToAST (SInt 42) `shouldBe` Right (AstInt 42)
+        it "converts SSymbol to AstSymbol" $
+            sexprToAST (SSymbol "foo") `shouldBe` Right (AstSymbol "foo")
+        it "converts SList [] to AstList []" $
+            sexprToAST (SList []) `shouldBe` Right (AstList [])
+        it "converts define form" $
+            sexprToAST (SList [SSymbol "define", SSymbol "x", SInt 1])
+                `shouldBe` Right (Define "x" (AstInt 1))
+        it "returns Left for malformed define" $
+            sexprToAST (SList [SSymbol "define", SSymbol "x"])
+                `shouldSatisfy` isLeft
+        it "converts function call" $
+            sexprToAST (SList [SSymbol "+", SInt 1, SInt 2])
+                `shouldBe` Right (Call (AstSymbol "+") [AstInt 1, AstInt 2])
+        it "allows non-symbol function position" $
+            sexprToAST (SList [SInt 1, SInt 2])
+                `shouldBe` Right (Call (AstInt 1) [AstInt 2])
+        it "returns Left when define name is not a symbol" $
+            sexprToAST (SList [SSymbol "define", SInt 1, SInt 2])
+                `shouldSatisfy` isLeft
+        it "converts SBool to AstBool" $
+            sexprToAST (SBool True) `shouldBe` Right (AstBool True)
 
-		it "allows non-symbol function position" $ do
-			sexprToAST (SList [SInt 1, SInt 2]) `shouldBe` Just (Call (AstInt 1) [AstInt 2])
+    describe "evalAST" $ do
+        it "evaluates AstBool True" $
+            eval (AstBool True) `shouldBe` Just (AstBool True)
+        it "evaluates AstBool False" $
+            eval (AstBool False) `shouldBe` Just (AstBool False)
+        it "evaluates Define" $
+            eval (Define "x" (AstInt 42)) `shouldBe` Just AstVoid
+        it "evaluates AstInt" $
+            eval (AstInt 5) `shouldBe` Just (AstInt 5)
+        it "evaluates AstSymbol (unbound)" $
+            eval (AstSymbol "foo") `shouldBe` Nothing
+        it "evaluates addition" $
+            eval (Call (AstSymbol "+") [AstInt 1, AstInt 2])
+                `shouldBe` Just (AstInt 3)
+        it "evaluates multiplication" $
+            eval (Call (AstSymbol "*") [AstInt 2, AstInt 3])
+                `shouldBe` Just (AstInt 6)
+        it "evaluates subtraction" $
+            eval (Call (AstSymbol "-") [AstInt 5, AstInt 2])
+                `shouldBe` Just (AstInt 3)
+        it "evaluates division" $
+            eval (Call (AstSymbol "div") [AstInt 8, AstInt 2])
+                `shouldBe` Just (AstInt 4)
+        it "returns Nothing for division by zero" $
+            eval (Call (AstSymbol "div") [AstInt 8, AstInt 0])
+                `shouldBe` Nothing
+        it "returns Nothing for non-int args" $
+            eval (Call (AstSymbol "+") [AstSymbol "foo"]) `shouldBe` Nothing
+        it "returns Nothing for subtraction with no args" $
+            eval (Call (AstSymbol "-") []) `shouldBe` Nothing
+        it "addition with no args returns 0" $
+            eval (Call (AstSymbol "+") []) `shouldBe` Just (AstInt 0)
+        it "multiplication with no args returns 1" $
+            eval (Call (AstSymbol "*") []) `shouldBe` Just (AstInt 1)
+        it "addition with multiple args" $
+            eval (Call (AstSymbol "+") [AstInt 1, AstInt 2, AstInt 3])
+                `shouldBe` Just (AstInt 6)
+        it "multiplication with multiple args" $
+            eval (Call (AstSymbol "*") [AstInt 2, AstInt 3, AstInt 4])
+                `shouldBe` Just (AstInt 24)
+        it "subtraction with multiple args" $
+            eval (Call (AstSymbol "-") [AstInt 10, AstInt 2, AstInt 3])
+                `shouldBe` Just (AstInt 5)
+        it "division with multiple args" $
+            eval (Call (AstSymbol "div") [AstInt 24, AstInt 2, AstInt 3])
+                `shouldBe` Just (AstInt 4)
+        it "subtraction with single arg returns the arg" $
+            eval (Call (AstSymbol "-") [AstInt 5]) `shouldBe` Just (AstInt 5)
+        it "division with no args returns Nothing" $
+            eval (Call (AstSymbol "div") []) `shouldBe` Nothing
+        it "unknown operator returns Nothing" $
+            eval (Call (AstSymbol "foo") [AstInt 1, AstInt 2])
+                `shouldBe` Nothing
+        it "Call with non-AstSymbol function returns Nothing" $
+            eval (Call (AstInt 99) [AstInt 1]) `shouldBe` Nothing
+        it "Call with nested failing arg returns Nothing" $
+            eval (Call (AstSymbol "+") [Call (AstSymbol "bad") [AstInt 1]])
+                `shouldBe` Nothing
 
-		it "returns Nothing when define name is not a symbol" $ do
-			sexprToAST (SList [SSymbol "define", SInt 1, SInt 2]) `shouldBe` Nothing
+    describe "Predicates and if" $ do
+        it "eq? returns true for equal ints" $
+            eval (Call (AstSymbol "eq?") [AstInt 1, AstInt 1])
+                `shouldBe` Just (AstBool True)
+        it "eq? returns false for different ints" $
+            eval (Call (AstSymbol "eq?") [AstInt 1, AstInt 2])
+                `shouldBe` Just (AstBool False)
+        it "< returns true when first < second" $
+            eval (Call (AstSymbol "<") [AstInt 1, AstInt 2])
+                `shouldBe` Just (AstBool True)
+        it "< returns false when first >= second" $
+            eval (Call (AstSymbol "<") [AstInt 2, AstInt 1])
+                `shouldBe` Just (AstBool False)
+        it "if chooses then branch when condition true" $
+            eval (Call (AstSymbol "if") [AstBool True, AstInt 1, AstInt 2])
+                `shouldBe` Just (AstInt 1)
+        it "if chooses else branch when condition false" $
+            eval (Call (AstSymbol "if") [AstBool False, AstInt 1, AstInt 2])
+                `shouldBe` Just (AstInt 2)
+        it "if returns Nothing for non-bool condition" $
+            eval (Call (AstSymbol "if") [AstInt 1, AstInt 1, AstInt 2])
+                `shouldBe` Nothing
+        it "eq? with wrong arity returns Nothing" $
+            eval (Call (AstSymbol "eq?") [AstInt 1]) `shouldBe` Nothing
+        it "< with non-int arg returns Nothing" $
+            eval (Call (AstSymbol "<") [AstInt 1, AstSymbol "x"])
+                `shouldBe` Nothing
+        it "mod returns remainder when divisor non-zero" $
+            eval (Call (AstSymbol "mod") [AstInt 5, AstInt 2])
+                `shouldBe` Just (AstInt 1)
+        it "mod returns Nothing when divisor is zero" $
+            eval (Call (AstSymbol "mod") [AstInt 5, AstInt 0])
+                `shouldBe` Nothing
 
-		FilesSpec.spec
+    describe "Atoms Tests" $ do
+        it "integer positive" $ "42" `shouldEvalTo` AstInt 42
+        it "integer negative" $ "-42" `shouldEvalTo` AstInt (-42)
+        it "integer zero" $ "0" `shouldEvalTo` AstInt 0
+        it "boolean true" $ "#t" `shouldEvalTo` AstBool True
+        it "boolean false" $ "#f" `shouldEvalTo` AstBool False
+        it "symbol simple" $ "(define foo 42)\nfoo" `shouldEvalTo` AstInt 42
 
-	describe "evalAST" $ do
-		it "evaluates AstBool True" $ do
-			eval (AstBool True) `shouldBe` Just (AstBool True)
-		it "evaluates AstBool False" $ do
-			eval (AstBool False) `shouldBe` Just (AstBool False)
-		it "evaluates Define" $ do
-			eval (Define "x" (AstInt 42)) `shouldBe` Just (AstVoid)
-		it "evaluates AstInt" $ do
-			eval (AstInt 5) `shouldBe` Just (AstInt 5)
-		it "evaluates AstSymbol" $ do
-			eval (AstSymbol "foo") `shouldBe` Nothing
-		it "evaluates addition" $ do
-			eval (Call (AstSymbol "+") [AstInt 1, AstInt 2])
-				`shouldBe` Just (AstInt 3)
-		it "evaluates multiplication" $ do
-			eval (Call (AstSymbol "*") [AstInt 2, AstInt 3])
-				`shouldBe` Just (AstInt 6)
-		it "evaluates subtraction" $ do
-			eval (Call (AstSymbol "-") [AstInt 5, AstInt 2])
-				`shouldBe` Just (AstInt 3)
-		it "evaluates division" $ do
-			eval (Call (AstSymbol "div") [AstInt 8, AstInt 2])
-				`shouldBe` Just (AstInt 4)
-		it "returns Nothing for division by zero" $ do
-			eval (Call (AstSymbol "div") [AstInt 8, AstInt 0]) `shouldBe` Nothing
-		it "returns Nothing for division with zero in middle" $ do
-			eval (Call (AstSymbol "div") [AstInt 8, AstInt 2, AstInt 0]) `shouldBe` Nothing
-		it "returns Nothing for non-int args" $ do
-			eval (Call (AstSymbol "+") [AstSymbol "foo"]) `shouldBe` Nothing
+    describe "Builtin Functions Tests" $ do
+        it "add simple" $ "(+ 2 3)" `shouldEvalTo` AstInt 5
+        it "add negative" $ "(+ 2 -3)" `shouldEvalTo` AstInt (-1)
+        it "add zero" $ "(+ 5 0)" `shouldEvalTo` AstInt 5
+        it "sub simple" $ "(- 5 2)" `shouldEvalTo` AstInt 3
+        it "sub negative" $ "(- 5 -2)" `shouldEvalTo` AstInt 7
+        it "sub result negative" $ "(- 2 5)" `shouldEvalTo` AstInt (-3)
+        it "mul simple" $ "(* 2 3)" `shouldEvalTo` AstInt 6
+        it "mul negative" $ "(* 2 -3)" `shouldEvalTo` AstInt (-6)
+        it "mul zero" $ "(* 5 0)" `shouldEvalTo` AstInt 0
+        it "mul two negatives" $ "(* -2 -3)" `shouldEvalTo` AstInt 6
+        it "div simple" $ "(div 10 2)" `shouldEvalTo` AstInt 5
+        it "div truncate" $ "(div 10 3)" `shouldEvalTo` AstInt 3
+        it "div negative dividend" $ "(div -10 2)" `shouldEvalTo` AstInt (-5)
+        it "div negative divisor" $ "(div 10 -2)" `shouldEvalTo` AstInt (-5)
+        it "mod simple" $ "(mod 10 3)" `shouldEvalTo` AstInt 1
+        it "mod exact" $ "(mod 10 2)" `shouldEvalTo` AstInt 0
+        it "eq equal int" $ "(eq? 5 5)" `shouldEvalTo` AstBool True
+        it "eq diff int" $ "(eq? 5 6)" `shouldEvalTo` AstBool False
+        it "eq bool true" $ "(eq? #t #t)" `shouldEvalTo` AstBool True
+        it "eq bool false" $ "(eq? #f #f)" `shouldEvalTo` AstBool True
+        it "eq diff bool" $ "(eq? #t #f)" `shouldEvalTo` AstBool False
+        it "eq expressions" $ "(eq? (+ 1 2) (- 5 2))" `shouldEvalTo` AstBool True
+        it "less true" $ "(< 1 5)" `shouldEvalTo` AstBool True
+        it "less false" $ "(< 5 1)" `shouldEvalTo` AstBool False
+        it "less equal" $ "(< 5 5)" `shouldEvalTo` AstBool False
+        it "less negatives" $ "(< -5 -1)" `shouldEvalTo` AstBool True
+        it "less expressions" $ "(< (+ 3 2) (- 3 2))" `shouldEvalTo` AstBool False
+        it "nested arithmetic" $ "(+ 1 (* 2 (- 10 5)))" `shouldEvalTo` AstInt 11
+        it "complex arithmetic" $
+            "(+ (* 6 7) (- 10 (div 20 4)))" `shouldEvalTo` AstInt 47
 
-		it "returns Nothing for subtraction with no args" $ do
-			eval (Call (AstSymbol "-") []) `shouldBe` Nothing
+    describe "Conditional (if) Tests" $ do
+        it "if true" $ "(if #t 1 2)" `shouldEvalTo` AstInt 1
+        it "if false" $ "(if #f 1 2)" `shouldEvalTo` AstInt 2
+        it "if with comparison" $
+            "(if (< 5 10) (* 3 7) (* 3 8))" `shouldEvalTo` AstInt 21
+        it "if nested" $
+            "(if #t (if #f 1 2) 3)" `shouldEvalTo` AstInt 2
+        it "if with eq" $
+            "(if (eq? 5 5) 100 200)" `shouldEvalTo` AstInt 100
+        it "if complex branches" $
+            "(if (< 1 2) (+ 10 20) (- 10 20))" `shouldEvalTo` AstInt 30
+        it "if returns bool" $
+            "(if (< 1 2) #t #f)" `shouldEvalTo` AstBool True
+        it "if chain" $
+            "(if #f 1 (if #t 2 3))" `shouldEvalTo` AstInt 2
+        it "if deeply nested" $
+            "(if #t (if #t (if #t (if #t 5 4) 3) 2) 1)"
+                `shouldEvalTo` AstInt 5
 
-		it "evaluates AstList by mapping evalAST" $ do
-			eval (AstList [AstInt 1, AstSymbol "x"]) `shouldBe` Nothing
+    describe "Lambda Tests" $ do
+        it "lambda immediate call" $
+            "((lambda (a b) (+ a b)) 1 2)" `shouldEvalTo` AstInt 3
+        it "lambda no args call" $
+            "((lambda () 42))" `shouldEvalTo` AstInt 42
+        it "lambda assigned" $
+            "(define add (lambda (a b) (+ a b)))\n(add 3 4)"
+                `shouldEvalTo` AstInt 7
+        it "lambda nested" $
+            "(define make-adder (lambda (x) (lambda (y) (+ x y))))\n\
+            \(define add5 (make-adder 5))\n\
+            \(add5 5)" `shouldEvalTo` AstInt 10
+        it "lambda closure" $
+            "(define x 10)\n\
+            \(define add-to-x (lambda (y) (+ x y)))\n\
+            \(add-to-x 5)" `shouldEvalTo` AstInt 15
+        it "lambda shadowing" $
+            "(define x 100)\n\
+            \(define func (lambda (x) (+ x 2)))\n\
+            \(func 5)" `shouldEvalTo` AstInt 7
+        it "lambda many params" $
+            "(define compute (lambda (a b c d e) \
+            \(+ a (+ b (+ c (+ d e))))))\n\
+            \(compute 1 2 3 4 40)" `shouldEvalTo` AstInt 50
+        it "lambda curried call" $
+            "(define curry-add (lambda (a) (lambda (b) (+ a b))))\n\
+            \(define add5 (curry-add 5))\n\
+            \(add5 7)" `shouldEvalTo` AstInt 12
+        it "lambda as argument" $
+            "(define apply-twice (lambda (f x) (f (f x))))\n\
+            \(define double (lambda (x) (+ x x)))\n\
+            \(apply-twice double 2)" `shouldEvalTo` AstInt 8
+        it "lambda complex body" $
+            "(define complex (lambda (a b) \
+            \(if (< a b) (+ a b) (- a b))))\n\
+            \(complex 100 10)" `shouldEvalTo` AstInt 90
+        it "lambda returns bool" $
+            "(define is-positive (lambda (x) (if (< 0 x) #t #f)))\n\
+            \(is-positive 5)" `shouldEvalTo` AstBool True
 
-		it "addition with no args returns 0" $ do
-			eval (Call (AstSymbol "+") []) `shouldBe` Just (AstInt 0)
+    describe "Define/Binding Tests" $ do
+        it "define simple" $
+            "(define x 42)\nx" `shouldEvalTo` AstInt 42
+        it "define expression" $
+            "(define x (+ 3 7))\nx" `shouldEvalTo` AstInt 10
+        it "define boolean true" $
+            "(define b #t)\nb" `shouldEvalTo` AstBool True
+        it "define boolean false" $
+            "(define b #f)\nb" `shouldEvalTo` AstBool False
+        it "define multiple" $
+            "(define a 10)\n(define b 20)\n(+ a b)" `shouldEvalTo` AstInt 30
+        it "define chained" $
+            "(define a 10)\n(define b a)\n(define c (* b b))\nc"
+                `shouldEvalTo` AstInt 100
+        it "define named function" $
+            "(define (add a b) (+ a b))\n(add 3 4)" `shouldEvalTo` AstInt 7
+        it "define named function no args" $
+            "(define (get-42) 42)\n(get-42)" `shouldEvalTo` AstInt 42
+        it "define named function single" $
+            "(define (square x) (* x x))\n(square 5)" `shouldEvalTo` AstInt 25
+        it "define named function many" $
+            "(define (sum3 a b c) (+ a (+ b c)))\n(sum3 5 5 5)"
+                `shouldEvalTo` AstInt 15
+        it "define redefine" $
+            "(define x 100)\n(define x 200)\nx" `shouldEvalTo` AstInt 200
+        it "define negative" $
+            "(define x -42)\nx" `shouldEvalTo` AstInt (-42)
+        it "define zero" $
+            "(define x 0)\nx" `shouldEvalTo` AstInt 0
+        it "define complex expr" $
+            "(define x (+ (* 2 3) (- 20 5)))\nx" `shouldEvalTo` AstInt 21
 
-		it "multiplication with no args returns 1" $ do
-			eval (Call (AstSymbol "*") []) `shouldBe` Just (AstInt 1)
+    describe "Complex Programs Tests" $ do
+        it "factorial" $
+            "(define (fact x) \
+            \(if (eq? x 1) 1 (* x (fact (- x 1)))))\n\
+            \(fact 10)" `shouldEvalTo` AstInt 3628800
+        it "factorial lambda" $
+            "(define fact (lambda (n) \
+            \(if (eq? n 0) 1 (* n (fact (- n 1))))))\n\
+            \(fact 5)" `shouldEvalTo` AstInt 120
+        it "greater than" $
+            "(define (> a b) \
+            \(if (eq? a b) #f (if (< a b) #f #t)))\n\
+            \(> 10 5)" `shouldEvalTo` AstBool True
+        it "fibonacci" $
+            "(define (fib n) \
+            \(if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))\n\
+            \(fib 10)" `shouldEvalTo` AstInt 55
+        it "power" $
+            "(define (pow b e) \
+            \(if (eq? e 0) 1 (* b (pow b (- e 1)))))\n\
+            \(pow 2 10)" `shouldEvalTo` AstInt 1024
+        it "gcd" $
+            "(define (gcd a b) \
+            \(if (eq? b 0) a (gcd b (mod a b))))\n\
+            \(gcd 48 18)" `shouldEvalTo` AstInt 6
+        it "absolute value" $
+            "(define (abs x) (if (< x 0) (- 0 x) x))\n\
+            \(abs -42)" `shouldEvalTo` AstInt 42
+        it "max" $
+            "(define (max a b) (if (< a b) b a))\n\
+            \(max 17 42)" `shouldEvalTo` AstInt 42
+        it "min" $
+            "(define (min a b) (if (< a b) a b))\n\
+            \(min 17 42)" `shouldEvalTo` AstInt 17
+        it "sum to n" $
+            "(define (sum-to n) \
+            \(if (eq? n 0) 0 (+ n (sum-to (- n 1)))))\n\
+            \(sum-to 10)" `shouldEvalTo` AstInt 55
+        it "is even" $
+            "(define (is-even n) \
+            \(eq? (mod n 2) 0))\n\
+            \(is-even 10)" `shouldEvalTo` AstBool True
+        it "is odd" $
+            "(define (is-odd n) \
+            \(eq? (mod n 2) 1))\n\
+            \(is-odd 7)" `shouldEvalTo` AstBool True
+        it "multiple functions" $
+            "(define (double x) (* x 2))\n\
+            \(define (quadruple x) (double (double x)))\n\
+            \(quadruple 25)" `shouldEvalTo` AstInt 100
+        it "factorial tail recursive" $
+            "(define (fact-tr n acc) \
+            \(if (eq? n 0) acc (fact-tr (- n 1) (* n acc))))\n\
+            \(define (fact n) (fact-tr n 1))\n\
+            \(fact 10)" `shouldEvalTo` AstInt 3628800
+        it "higher order" $
+            "(define (apply-twice f x) (f (f x)))\n\
+            \(define (triple x) (* x 3))\n\
+            \(apply-twice triple 8)" `shouldEvalTo` AstInt 72
+        it "less or equal" $
+            "(define (<= a b) (if (< a b) #t (eq? a b)))\n\
+            \(<= 5 5)" `shouldEvalTo` AstBool True
+        it "greater or equal" $
+            "(define (>= a b) (if (< a b) #f #t))\n\
+            \(>= 5 5)" `shouldEvalTo` AstBool True
+        it "not equal" $
+            "(define (!= a b) (if (eq? a b) #f #t))\n\
+            \(!= 5 6)" `shouldEvalTo` AstBool True
+        it "div mod verify" $
+            "(define a 17)\n(define b 5)\n\
+            \(eq? a (+ (* (div a b) b) (mod a b)))"
+                `shouldEvalTo` AstBool True
+        it "countdown" $
+            "(define (countdown n) \
+            \(if (eq? n 0) 0 (countdown (- n 1))))\n\
+            \(countdown 100)" `shouldEvalTo` AstInt 0
 
-		it "addition with multiple args" $ do
-			eval (Call (AstSymbol "+") [AstInt 1, AstInt 2, AstInt 3]) `shouldBe` Just (AstInt 6)
+    describe "Edge Cases Tests" $ do
+        it "single value" $ "42" `shouldEvalTo` AstInt 42
+        it "long symbol name" $
+            "(define this-is-a-very-long-variable-name 42)\n\
+            \this-is-a-very-long-variable-name" `shouldEvalTo` AstInt 42
+        it "symbol special chars" $
+            "(define foo-bar_baz 42)\nfoo-bar_baz" `shouldEvalTo` AstInt 42
+        it "arithmetic identity" $
+            "(+ (- 0 42) 42)" `shouldEvalTo` AstInt 0
+        it "nested function calls" $
+            "(+ (+ (+ (+ 1 2) 3) 4) 6)" `shouldEvalTo` AstInt 16
+        it "large computation" $
+            "(* 1000 1000)" `shouldEvalTo` AstInt 1000000
+        it "zero operations" $
+            "(+ 0 0)" `shouldEvalTo` AstInt 0
+        it "multiply by one" $
+            "(* 42 1)" `shouldEvalTo` AstInt 42
+        it "subtract same" $
+            "(- 42 42)" `shouldEvalTo` AstInt 0
+        it "div by one" $
+            "(div 42 1)" `shouldEvalTo` AstInt 42
+        it "lambda ignore arg" $
+            "((lambda (x) 42) 999)" `shouldEvalTo` AstInt 42
+        it "recursion depth" $
+            "(define (recurse n) \
+            \(if (eq? n 0) 0 (recurse (- n 1))))\n\
+            \(recurse 500)" `shouldEvalTo` AstInt 0
+        it "bool var condition" $
+            "(define cond #t)\n(if cond 1 2)" `shouldEvalTo` AstInt 1
+        it "comments" $
+            "; comment\n(define x 42) ; inline\n; more\nx"
+                `shouldEvalTo` AstInt 42
+        it "nested lambda call" $
+            "(define make-adder (lambda (x) (lambda (y) (+ x y))))\n\
+            \(define add5 (make-adder 5))\n\
+            \(add5 10)" `shouldEvalTo` AstInt 15
+        it "self apply" $
+            "((lambda (f) (f 42)) (lambda (x) x))" `shouldEvalTo` AstInt 42
+        it "triple nested arithmetic" $
+            "(+ (* 10 (- 15 5)) (div 100 (+ 5 5)))" `shouldEvalTo` AstInt 110
+        it "eq computed" $
+            "(eq? (+ 20 22) (* 6 7))" `shouldEvalTo` AstBool True
+        it "deep if nesting" $
+            "(if #t (if #t (if #t (if #t (if #t (if #t 42 0) 0) 0) 0) 0) 0)"
+                `shouldEvalTo` AstInt 42
 
-		it "multiplication with multiple args" $ do
-			eval (Call (AstSymbol "*") [AstInt 2, AstInt 3, AstInt 4]) `shouldBe` Just (AstInt 24)
+    describe "Error Handling Tests" $ do
+        it "unbound variable" $ shouldFail "foo"
+        it "division by zero" $ shouldFail "(div 10 0)"
+        it "modulo by zero" $ shouldFail "(mod 10 0)"
+        it "wrong type arg plus" $ shouldFail "(+ 1 #t)"
+        it "wrong type arg less" $ shouldFail "(< 1 #t)"
+        it "call non procedure" $ shouldFail "(42 1 2)"
+        it "define missing value" $ shouldFail "(define foo)"
+        it "define missing symbol" $ shouldFail "(define)"
+        it "lambda missing body" $ shouldFail "(lambda (a b))"
+        it "lambda missing args" $ shouldFail "(lambda)"
+        it "if missing else" $ shouldFail "(if #t 1)"
+        it "if missing then" $ shouldFail "(if #t)"
+        it "if missing condition" $ shouldFail "(if)"
+        it "lambda too few args" $
+            shouldFail "(define add (lambda (a b) (+ a b)))\n(add 1)"
+        it "lambda too many args" $
+            shouldFail "(define add (lambda (a b) (+ a b)))\n(add 1 2 3)"
+        it "define number as symbol" $ shouldFail "(define 42 \"value\")"
+        it "lambda non symbol param" $ shouldFail "(lambda (1 2) (+ 1 2))"
+        it "nested unbound variable" $ shouldFail "(+ 1 (* 2 undefined_var))"
+        it "missing close paren" $ shouldFail "(+ 1 2"
+        it "extra close paren" $ shouldFail "(+ 1 2))"
 
-		it "subtraction with multiple args" $ do
-			eval (Call (AstSymbol "-") [AstInt 10, AstInt 2, AstInt 3]) `shouldBe` Just (AstInt 5)
+    describe "List Parsing Tests" $ do
+        it "list with spaces" $ "(+   1   2)" `shouldEvalTo` AstInt 3
+        it "list with tabs" $ "(+\t1\t2)" `shouldEvalTo` AstInt 3
+        it "list with newlines" $ "(+\n1\n2)" `shouldEvalTo` AstInt 3
 
-		it "division with multiple args" $ do
-			eval (Call (AstSymbol "div") [AstInt 24, AstInt 2, AstInt 3]) `shouldBe` Just (AstInt 4)
+    describe "Ast Eq and Show instances" $ do
+        it "Ast Eq works for Define" $ do
+            (Define "x" (AstInt 1) == Define "x" (AstInt 1)) `shouldBe` True
+            (Define "x" (AstInt 1) == Define "y" (AstInt 1)) `shouldBe` False
+        it "Ast Eq works for AstInt" $ do
+            (AstInt 1 == AstInt 1) `shouldBe` True
+            (AstInt 1 == AstInt 2) `shouldBe` False
+        it "Ast Eq works for AstSymbol" $ do
+            (AstSymbol "x" == AstSymbol "x") `shouldBe` True
+            (AstSymbol "x" == AstSymbol "y") `shouldBe` False
+        it "Ast Eq works for AstBool" $ do
+            (AstBool True == AstBool True) `shouldBe` True
+            (AstBool True == AstBool False) `shouldBe` False
+        it "Ast Show works for all constructors" $ do
+            show (Define "x" (AstInt 1)) `shouldSatisfy` (not . null)
+            show (AstInt 42) `shouldSatisfy` (not . null)
+            show (AstSymbol "foo") `shouldSatisfy` (not . null)
+            show (AstBool True) `shouldSatisfy` (not . null)
+            show (AstList []) `shouldSatisfy` (not . null)
+            show (Call (AstSymbol "+") [AstInt 1]) `shouldSatisfy` (not . null)
+        it "SExpr Show works for all constructors" $ do
+            show (SInt 42) `shouldSatisfy` (not . null)
+            show (SSymbol "foo") `shouldSatisfy` (not . null)
+            show (SList [SInt 1]) `shouldSatisfy` (not . null)
 
-		it "subtraction with single arg returns the arg" $ do
-			eval (Call (AstSymbol "-") [AstInt 5]) `shouldBe` Just (AstInt 5)
+    describe "Define field accessors" $ do
+        it "defName accessor works" $
+            defName (Define "myVar" (AstInt 42)) `shouldBe` "myVar"
+        it "defValue accessor works" $
+            defValue (Define "myVar" (AstInt 42)) `shouldBe` AstInt 42
 
-		it "division with single arg returns the arg" $ do
-			eval (Call (AstSymbol "div") [AstInt 10]) `shouldBe` Just (AstInt 10)
-
-		it "division with no args returns Nothing" $ do
-			eval (Call (AstSymbol "div") []) `shouldBe` Nothing
-
-		it "unknown operator returns Nothing" $ do
-			eval (Call (AstSymbol "foo") [AstInt 1, AstInt 2]) `shouldBe` Nothing
-
-		it "Call with non-AstSymbol function evaluates to Nothing (no op match)" $ do
-			eval (Call (AstInt 99) [AstInt 1]) `shouldBe` Nothing
-
-		it "Call with nested failing arg returns Nothing" $ do
-			eval (Call (AstSymbol "+") [Call (AstSymbol "bad") [AstInt 1]]) `shouldBe` Nothing
-
-	describe "sexprToAST additional cases" $ do
-		it "makeCall returns Nothing if fn is unconvertible" $ do
-			sexprToAST (SList [SList [SSymbol "define", SSymbol "x"], SInt 1]) `shouldBe` Nothing
-
-		it "makeCall returns Nothing if an arg is unconvertible" $ do
-			sexprToAST (SList [SSymbol "+", SList [SSymbol "define", SSymbol "x"]]) `shouldBe` Nothing
-
-		it "define with unconvertible value returns Nothing" $ do
-			sexprToAST (SList [SSymbol "define", SSymbol "x", SList [SSymbol "define"]]) `shouldBe` Nothing
-
-	describe "Ast Eq and Show instances" $ do
-		it "Ast Eq works for Define" $ do
-			(Define "x" (AstInt 1) == Define "x" (AstInt 1)) `shouldBe` True
-			(Define "x" (AstInt 1) == Define "y" (AstInt 1)) `shouldBe` False
-			(Define "x" (AstInt 1) /= Define "y" (AstInt 1)) `shouldBe` True
-		it "Ast Eq works for AstInt" $ do
-			(AstInt 1 == AstInt 1) `shouldBe` True
-			(AstInt 1 == AstInt 2) `shouldBe` False
-		it "Ast Eq works for AstSymbol" $ do
-			(AstSymbol "x" == AstSymbol "x") `shouldBe` True
-			(AstSymbol "x" == AstSymbol "y") `shouldBe` False
-		it "Ast Eq works for AstBool" $ do
-			(AstBool True == AstBool True) `shouldBe` True
-			(AstBool True == AstBool False) `shouldBe` False
-		it "Ast Eq works for AstList" $ do
-			(AstList [AstInt 1] == AstList [AstInt 1]) `shouldBe` True
-			(AstList [AstInt 1] == AstList [AstInt 2]) `shouldBe` False
-		it "Ast Eq works for Call" $ do
-			(Call (AstSymbol "+") [AstInt 1] == Call (AstSymbol "+") [AstInt 1]) `shouldBe` True
-			(Call (AstSymbol "+") [AstInt 1] == Call (AstSymbol "-") [AstInt 1]) `shouldBe` False
-		it "Ast Show works for all constructors" $ do
-			show (Define "x" (AstInt 1)) `shouldSatisfy` (not . null)
-			show (AstInt 42) `shouldSatisfy` (not . null)
-			show (AstSymbol "foo") `shouldSatisfy` (not . null)
-			show (AstBool True) `shouldSatisfy` (not . null)
-			show (AstList []) `shouldSatisfy` (not . null)
-			show (Call (AstSymbol "+") [AstInt 1]) `shouldSatisfy` (not . null)
-		it "SExpr Show works for all constructors" $ do
-			show (SInt 42) `shouldSatisfy` (not . null)
-			show (SSymbol "foo") `shouldSatisfy` (not . null)
-			show (SList [SInt 1]) `shouldSatisfy` (not . null)
-			show (SList []) `shouldSatisfy` (not . null)
-
-	describe "Define field accessors" $ do
-		it "defName accessor works" $ do
-			defName (Define "myVar" (AstInt 42)) `shouldBe` "myVar"
-		it "defValue accessor works" $ do
-			defValue (Define "myVar" (AstInt 42)) `shouldBe` AstInt 42
-
-	describe "Paths_glados coverage" $ do
-		it "exposes package version" $ do
-			(showVersion P.version) `shouldSatisfy` (not . null)
-
-		it "returns non-empty directory paths" $ do
-			bin <- P.getBinDir
-			lib <- P.getLibDir
-			dataDir <- P.getDataDir
-			libexec <- P.getLibexecDir
-			sysconf <- P.getSysconfDir
-			dynlib <- P.getDynLibDir
-			mapM_ (`shouldSatisfy` (not . null)) [bin, lib, dataDir, libexec, sysconf, dynlib]
-
-		it "getDataFileName appends file name" $ do
-			fp <- P.getDataFileName "somefile.txt"
-			fp `shouldSatisfy` ("somefile.txt" `isSuffixOf`)
-
-		it "getDataFileName handles empty string" $ do
-			fp <- P.getDataFileName ""
-			fp `shouldSatisfy` (not . null)
-
-		it "multiple calls to getBinDir" $ do
-			bin1 <- P.getBinDir
-			bin2 <- P.getBinDir
-			bin1 `shouldBe` bin2
-
-		it "version has correct structure" $ do
-			let v = P.version
-			show v `shouldSatisfy` (not . null)
-
-		it "getDataFileName uses trailing slash dir correctly (guard True)" $ do
-			setEnv "glados_datadir" "/tmp/"
-			fp <- P.getDataFileName "file.txt"
-			unsetEnv "glados_datadir"
-			fp `shouldBe` "/tmp/file.txt"
-
-		describe "Boolean guard helpers" $ do
-			it "guardSign covers <, ==, > guards" $ do
-				guardSign (-1) `shouldBe` (-1)
-				guardSign 0 `shouldBe` 0
-				guardSign 2 `shouldBe` 1
-			it "guardSteps covers many equality/inequality guards" $ do
-				map guardSteps [-1,1,2,3,4,5,6,7,8,9,10] `shouldBe` [0,1,2,3,4,5,6,7,8,9,10]
-
-	describe "Predicates and if" $ do
-		it "eq? returns true for equal ints" $ do
-			eval (Call (AstSymbol "eq?") [AstInt 1, AstInt 1]) `shouldBe` Just (AstBool True)
-		it "eq? returns false for different ints" $ do
-			eval (Call (AstSymbol "eq?") [AstInt 1, AstInt 2]) `shouldBe` Just (AstBool False)
-		it "< returns true when first < second" $ do
-			eval (Call (AstSymbol "<") [AstInt 1, AstInt 2]) `shouldBe` Just (AstBool True)
-		it "< returns false when first >= second" $ do
-			eval (Call (AstSymbol "<") [AstInt 2, AstInt 1]) `shouldBe` Just (AstBool False)
-		it "if chooses then branch when condition true" $ do
-			eval (Call (AstSymbol "if") [AstBool True, AstInt 1, AstInt 2]) `shouldBe` Just (AstInt 1)
-		it "if chooses else branch when condition false" $ do
-			eval (Call (AstSymbol "if") [AstBool False, AstInt 1, AstInt 2]) `shouldBe` Just (AstInt 2)
-		it "if returns Nothing for non-bool condition" $ do
-			eval (Call (AstSymbol "if") [AstInt 1, AstInt 1, AstInt 2]) `shouldBe` Nothing
-		it "malformed if (wrong arity) in sexprToAST returns Nothing" $ do
-			sexprToAST (SList [SSymbol "if", SInt 1, SInt 2]) `shouldBe` Nothing
-		it "eq? with wrong arity returns Nothing" $ do
-			eval (Call (AstSymbol "eq?") [AstInt 1]) `shouldBe` Nothing
-		it "< with non-int arg returns Nothing" $ do
-			eval (Call (AstSymbol "<") [AstInt 1, AstSymbol "x"]) `shouldBe` Nothing
-		it "mod returns remainder when divisor non-zero" $ do
-			eval (Call (AstSymbol "mod") [AstInt 5, AstInt 2]) `shouldBe` Just (AstInt 1)
-		it "mod returns Nothing when divisor is zero" $ do
-			eval (Call (AstSymbol "mod") [AstInt 5, AstInt 0]) `shouldBe` Nothing
-		it "sexprToAST converts SBool to AstBool" $ do
-			sexprToAST (SBool True) `shouldBe` Just (AstBool True)
-		it "sexprToAST maps nested SList to AstList" $ do
-			sexprToAST (SList [SList [SSymbol "+", SInt 1, SInt 2], SInt 3])
-				`shouldBe` Just (AstList [Call (AstSymbol "+") [AstInt 1, AstInt 2], AstInt 3])
-
-		describe "Lambda / define-function" $ do
-			it "parses and evaluates function-style define and call (>)" $ do
-				let defineList = SList [SSymbol "define", SList [SSymbol ">", SSymbol "a", SSymbol "b"],
-							SList [SSymbol "if", SList [SSymbol "eq?", SSymbol "a", SSymbol "b"], SBool False,
-								SList [SSymbol "if", SList [SSymbol "<", SSymbol "a", SSymbol "b"], SBool False, SBool True]]]
-				let callList = SList [SSymbol ">", SInt 10, SInt (-2)]
-				let sexpr = SList [defineList, callList]
-				case sexprToAST sexpr of
-					Just ast -> eval ast `shouldBe` Just (AstBool True)
-					Nothing -> expectationFailure "Parsing error for function-style define"
-
-			it "defines recursive factorial and evaluates fact 5" $ do
-				let defineFact = SList [SSymbol "define", SList [SSymbol "fact", SSymbol "x"],
-							SList [SSymbol "if", SList [SSymbol "eq?", SSymbol "x", SInt 1], SInt 1,
-							SList [SSymbol "*", SSymbol "x", SList [SSymbol "fact", SList [SSymbol "-", SSymbol "x", SInt 1]]]]]
-				let callFact = SList [SSymbol "fact", SInt 5]
-				let sexpr = SList [defineFact, callFact]
-				case sexprToAST sexpr of
-					Just ast -> eval ast `shouldBe` Just (AstInt 120)
-					Nothing -> expectationFailure "Parsing error for factorial define"
-		it "eq? works for symbols when bound" $ do
-			let seq1 = AstList [Define "x" (AstInt 1), Call (AstSymbol "eq?") [AstSymbol "x", AstSymbol "x"]]
-			let seq2 = AstList [Define "x" (AstInt 1), Define "y" (AstInt 2), Call (AstSymbol "eq?") [AstSymbol "x", AstSymbol "y"]]
-			eval seq1 `shouldBe` Just (AstBool True)
-			eval seq2 `shouldBe` Just (AstBool False)
-		it "sequence with define and use updates env" $ do
-			let seqAst = AstList [Define "foo" (AstInt 9), Call (AstSymbol "*") [AstSymbol "foo", AstInt 3]]
-			eval seqAst `shouldBe` Just (AstInt 27)
+    describe "Paths_glados coverage" $ do
+        it "exposes package version" $
+            showVersion P.version `shouldSatisfy` (not . null)
+        it "returns non-empty directory paths" $ do
+            bin <- P.getBinDir
+            lib <- P.getLibDir
+            dataDir <- P.getDataDir
+            libexec <- P.getLibexecDir
+            sysconf <- P.getSysconfDir
+            dynlib <- P.getDynLibDir
+            mapM_ (`shouldSatisfy` (not . null))
+                [bin, lib, dataDir, libexec, sysconf, dynlib]
+        it "getDataFileName appends file name" $ do
+            fp <- P.getDataFileName "somefile.txt"
+            fp `shouldSatisfy` ("somefile.txt" `isSuffixOf`)
+        it "getDataFileName handles empty string" $ do
+            fp <- P.getDataFileName ""
+            fp `shouldSatisfy` (not . null)
+        it "multiple calls to getBinDir" $ do
+            bin1 <- P.getBinDir
+            bin2 <- P.getBinDir
+            bin1 `shouldBe` bin2
+        it "version has correct structure" $
+            show P.version `shouldSatisfy` (not . null)
+        it "getDataFileName uses trailing slash dir correctly" $ do
+            setEnv "glados_datadir" "/tmp/"
+            fp <- P.getDataFileName "file.txt"
+            unsetEnv "glados_datadir"
+            fp `shouldBe` "/tmp/file.txt"

@@ -7,36 +7,65 @@
 module Main (main) where
 
 import System.Exit (exitWith, ExitCode(ExitFailure))
-import System.IO (hPutStrLn, stderr)
-import Lib (SExpr(..), Ast(..), parseSExpr, parseSExprMultiple,
-            parseSExprMultipleEither, sexprToAST, evalAST)
+import System.IO (hPutStrLn, stderr, hFlush, stdout,
+                  hIsTerminalDevice, stdin, isEOF)
+import Lib (SExpr(..), Ast(..), parseSExprMultipleEither, sexprToAST, evalAST)
 
 main :: IO ()
 main = do
-    input <- getContents
-    case parseSExprMultipleEither input of
-        Right sexprs -> evalSequence [] sexprs
-        Left err -> hPutStrLn stderr ("*** ERROR: " ++ err) >>
-                    exitWith (ExitFailure 84)
+    isTTY <- hIsTerminalDevice stdin
+    if isTTY
+        then repl []
+        else do
+            input <- getContents
+            case parseSExprMultipleEither input of
+                Right sexprs -> evalSequence [] sexprs
+                Left err -> printError ("Parsing error:\n" ++ err) >>
+                            exitWith (ExitFailure 84)
 
-testExprMultiple :: String -> IO ()
-testExprMultiple input = putStrLn ("\n--- Testing: " ++ input ++ " ---") >>
-    case parseSExprMultiple input of
-        Just sexprs -> evalSequence [] sexprs
-        Nothing -> putStrLn "Parser error"
+repl :: Env -> IO ()
+repl env = putStr "> " >> hFlush stdout >> isEOF >>= handleEof env
+
+handleEof :: Env -> Bool -> IO ()
+handleEof _ True = putStrLn ""
+handleEof env False = getLine >>= handleInput env
+
+handleInput :: Env -> String -> IO ()
+handleInput env input
+    | null (trim input) = repl env
+    | otherwise = case parseSExprMultipleEither input of
+        Right sexprs -> evalReplSequence env sexprs
+        Left _ -> printError "Parsing error" >> repl env
+
+evalReplSequence :: Env -> [SExpr] -> IO ()
+evalReplSequence env [] = repl env
+evalReplSequence env (s:ss) =
+    case sexprToAST s of
+        Right ast -> evalReplAst env ss ast
+        Left err -> printError err >> repl env
+
+evalReplAst :: Env -> [SExpr] -> Ast -> IO ()
+evalReplAst env ss ast =
+    case evalAST env ast of
+        Right (result, env') -> printResult' result >> evalReplSequence env' ss
+        Left err -> printError err >> repl env
+
+trim :: String -> String
+trim = dropWhile (== ' ') . reverse . dropWhile (== ' ') . reverse
 
 evalSequence :: Env -> [SExpr] -> IO ()
 evalSequence _ [] = return ()
 evalSequence env (s:ss) =
     case sexprToAST s of
-        Just ast ->
+        Right ast ->
             case evalAST env ast of
-                Just (result, env') -> printResult' result >>
-                                       evalSequence env' ss
-                Nothing -> hPutStrLn stderr "*** ERROR: Evaluation error" >>
-                           exitWith (ExitFailure 84)
-        Nothing -> hPutStrLn stderr "*** ERROR: Parsing error" >>
-                   exitWith (ExitFailure 84)
+                Right (result, env') -> printResult' result >>
+                                        evalSequence env' ss
+                Left err -> printError err >> exitWith (ExitFailure 84)
+        Left err -> printError err >> exitWith (ExitFailure 84)
+
+printError :: String -> IO ()
+printError msg = hPutStrLn stderr ("*** ERROR : " ++ msg)
 
 printResult' :: Ast -> IO ()
 printResult' (AstInt n) = print n
