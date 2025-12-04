@@ -4,7 +4,8 @@
 -- File description:
 -- file where the AST is defined
 -}
-module AST (SExpr(..), Ast(..), sexprToAST, evalAST, EvalResult) where
+module AST (SExpr(..), Ast(..), sexprToAST, evalAST, EvalResult,
+            defName, defValue) where
 
 data SExpr = SInt Int
             | SBool Bool
@@ -12,7 +13,7 @@ data SExpr = SInt Int
             | SList [SExpr]
             deriving Show
 
-data Ast = Define { defName :: String, defValue :: Ast }
+data Ast = Define String Ast
             | AstInt Int
             | AstSymbol String
             | AstBool Bool
@@ -22,6 +23,16 @@ data Ast = Define { defName :: String, defValue :: Ast }
             | AstClosure [String] Ast Env
             | AstVoid
             deriving (Show, Eq)
+
+-- | Accessor for Define name
+defName :: Ast -> String
+defName (Define n _) = n
+defName _ = error "defName: not a Define"
+
+-- | Accessor for Define value
+defValue :: Ast -> Ast
+defValue (Define _ v) = v
+defValue _ = error "defValue: not a Define"
 
 type Env = [(String, Ast)]
 type EvalResult = Either String (Ast, Env)

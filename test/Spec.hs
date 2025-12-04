@@ -6,7 +6,7 @@
 -}
 import Test.Hspec
 import Lib (SExpr(..), Ast(..), sexprToAST, evalAST,
-            parseSExprMultipleEither)
+            parseSExprMultipleEither, defName, defValue)
 import qualified Paths_glados as P
 import Data.Version (showVersion)
 import Data.List (isSuffixOf)

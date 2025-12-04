@@ -70,10 +70,10 @@ symbolAtom = do
 
 list :: Parser SExpr
 list = do
-  char '('
+  _ <- char '('
   spaceConsumer
   xs <- many (sexpr <* spaceConsumer)
-  char ')'
+  _ <- char ')'
   return (SList xs)
 
 -- | Space consumer that also skips comments
