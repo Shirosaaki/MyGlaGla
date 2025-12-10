@@ -4,7 +4,7 @@ Deschodt Eric() -> int
         peric("i = {i}")
 
     peric("Boucle darius :")
-    eric x = 0
+    eric x = 0 -> int
     darius (x < 3):
         peric("x = {x}")
         x = x + 1

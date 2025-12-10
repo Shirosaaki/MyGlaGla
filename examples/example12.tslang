@@ -5,7 +5,7 @@ Deschodt factoriel(n -> int) -> int
         deschodt n * factoriel(n - 1)
 
 Deschodt Eric() -> int
-    eric val = 5
+    eric val = 5 -> int
     peric("factoriel({val}) = {factoriel(val)}")
     deschodt 0
 
