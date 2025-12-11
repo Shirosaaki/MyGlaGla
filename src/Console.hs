@@ -1,5 +1,8 @@
 {-
--- REPL and batch console handling
+-- EPITECH PROJECT, 2025
+-- Console
+-- File description:
+-- Interactive REPL and batch execution
 -}
 module Console (runConsole, runBatch) where
 
@@ -22,10 +25,14 @@ repl env = do
     minput <- getInputLine "> "
     case minput of
         Nothing -> outputStrLn ""  -- Ctrl-D exits
-        Just line
-            | trim line == "" -> repl env
-            | line == ":code" -> captureBlock env []
-            | otherwise -> handleLine env line
+        Just line -> handleInput env line
+
+-- | Route input based on command or content
+handleInput :: Env -> String -> ReplM ()
+handleInput env ":code" = captureBlock env []
+handleInput env line
+    | null (trim line) = repl env
+    | otherwise = handleLine env line
 
 -- | Handle a single-line entry: parse and evaluate immediately.
 handleLine :: Env -> String -> ReplM ()
@@ -40,15 +47,17 @@ captureBlock env acc = do
     mline <- getInputLine "| "
     case mline of
         Nothing -> outputStrLn ""  -- EOF exits block
-        Just line
-            | line == ":end" -> do
-                let block = unlines (reverse acc)
-                if null (trim block)
-                then repl env
-                else case parseSExprMultipleEither block of
-                    Right sexprs -> evalReplSequence env sexprs
-                    Left _ -> outputStrLn "Parsing error" >> repl env
-            | otherwise -> captureBlock env (line : acc)
+        Just ":end" -> execBlock env acc
+        Just line -> captureBlock env (line : acc)
+
+execBlock :: Env -> [String] -> ReplM ()
+execBlock env acc =
+    let block = unlines (reverse acc)
+    in if null (trim block)
+       then repl env
+       else case parseSExprMultipleEither block of
+           Right sexprs -> evalReplSequence env sexprs
+           Left _ -> outputStrLn "Parsing error" >> repl env
 
 -- | Evaluate a list of s-expressions in the REPL context.
 evalReplSequence :: Env -> [SExpr] -> ReplM ()

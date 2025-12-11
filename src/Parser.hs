@@ -39,7 +39,8 @@ sexpr :: Parser SExpr
 sexpr = spaceConsumer *> (atom <|> list) <* spaceConsumer
 
 atom :: Parser SExpr
-atom = boolAtom <|> charAtom <|> stringAtom <|> try floatAtom <|> try intAtom <|> symbolAtom
+atom = boolAtom <|> charAtom <|> stringAtom <|>
+       try floatAtom <|> try intAtom <|> symbolAtom
 
 boolAtom :: Parser SExpr
 boolAtom = (string "#t" >> pure (SBool True))

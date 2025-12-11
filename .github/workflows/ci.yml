@@ -96,7 +96,7 @@ jobs:
 
   docs:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository != 'EpitechPGE3-2025/G-FUN-500-NCE-5-2-glados-1'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'EpitechPGE3-2025/G-FUN-500-NCE-5-2-glados-1'
 
     steps:
       - name: Checkout repository

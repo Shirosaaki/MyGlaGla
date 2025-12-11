@@ -197,25 +197,30 @@ evalAST env (IfElse cond thenExpr elseExpr) =
         Right (VBool False, env1) -> evalAST env1 elseExpr
         Right (_, _) -> Left "if: condition must be a boolean"
         Left err -> Left err
-evalAST env (Block stmts) =
-    case stmts of
-        [] -> Right (VVoid, env)
-        [s] -> evalAST env s
-        (s:rest) ->
-            case evalAST env s of
-                Right (_, env') -> evalAST env' (Block rest)
-                Left err -> Left err
-evalAST env (Call fnAst args) =
-    case fnAst of
-        AstSymbol op -> evalOpCall env op args
-        _ ->
-            case evalAST env fnAst of
-                Right (VClosure _ _ _, _) ->
-                    evalClosureCall env args fnAst
-                Right (other, _) ->
-                    Left ("attempt to apply non-procedure: " ++ showValue other)
-                Left err -> Left err
+evalAST env (Block stmts) = evalBlock env stmts
+evalAST env (Call fnAst args) = evalCall env fnAst args
 evalAST env other = Left ("Unsupported AST node: " ++ show other)
+
+-- | Evaluate a block of statements
+evalBlock :: Env -> [Ast] -> EvalResult
+evalBlock env [] = Right (VVoid, env)
+evalBlock env [s] = evalAST env s
+evalBlock env (s:rest) =
+    case evalAST env s of
+        Right (_, env') -> evalBlock env' rest
+        Left err -> Left err
+
+-- | Evaluate a function call
+evalCall :: Env -> Ast -> [Ast] -> EvalResult
+evalCall env (AstSymbol op) args = evalOpCall env op args
+evalCall env fnAst args =
+    case evalAST env fnAst of
+        Right (VClosure _ _ _, _) ->
+            evalClosureCall env args fnAst
+        Right (other, _) ->
+            Left ("attempt to apply non-procedure: " ++
+                  showValue other)
+        Left err -> Left err
 
 -- | Helper to convert closure AST to value
 valueFromClosure :: Ast -> Value
@@ -238,16 +243,29 @@ showValue (VStruct n _) = "#<struct:" ++ n ++ ">"
 evalClosureCall :: Env -> [Ast] -> Ast -> EvalResult
 evalClosureCall env args closureAst =
     case evalAST env closureAst of
+        Right (vc@(VClosure params _ _), _) ->
+            evalClosureCallChecked env args closureAst params vc
+        _ -> Left "Invalid closure"
+
+evalClosureCallChecked :: Env -> [Ast] -> Ast -> [String]
+                       -> Value -> EvalResult
+evalClosureCallChecked env args closureAst params vc =
+    case evalArgs env args of
+        Left err -> Left err
+        Right (argVals, _) ->
+            if length params == length argVals
+            then execClosure env closureAst argVals
+            else Left ("wrong number of arguments: expected " ++
+                      show (length params) ++ ", got " ++ show (length argVals))
+
+execClosure :: Env -> Ast -> [Value] -> EvalResult
+execClosure env closureAst argVals =
+    case evalAST env closureAst of
         Right (VClosure params body closureEnv, _) ->
-            case evalArgs env args of
+            case evalAST (zip params argVals ++ closureEnv) body of
+                Right (res, _) -> Right (res, env)
                 Left err -> Left err
-                Right (argVals, _) ->
-                    if length params /= length argVals
-                    then Left ("wrong number of arguments: expected " ++
-                              show (length params) ++ ", got " ++ show (length argVals))
-                    else case evalAST (zip params argVals ++ closureEnv) body of
-                        Right (res, _) -> Right (res, env)
-                        Left err -> Left err
+        _ -> Left "Invalid closure"
         Right (_, _) -> Left "attempt to call non-procedure"
         Left err -> Left err
 
