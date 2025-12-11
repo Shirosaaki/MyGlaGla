@@ -8,9 +8,8 @@
 NAME	=	glados
 
 all: 
-	stack build
+	stack build --copy-bins --local-bin-path .
 	stack install
-	cp -rf $(shell stack path --local-bin)/$(NAME)-exe ./$(NAME)
 
 clean:
 	stack clean

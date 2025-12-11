@@ -48,7 +48,6 @@ jobs:
           # Build the release artifact (compiled executable/package)
           mkdir -p dist
           stack build --copy-bins --local-bin-path dist
-          mv dist/glados-exe dist/glados
 
       - name: Calculate semantic version bump
         id: semver
