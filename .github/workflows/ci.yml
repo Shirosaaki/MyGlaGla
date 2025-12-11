@@ -69,7 +69,7 @@ jobs:
           artifactErrorsFailBuild: true
           draft: false
           prerelease: false
-          update_existing: true
+          allowUpdates: true
           token: ${{ secrets.GITHUB_TOKEN }}
   test:
     runs-on: ubuntu-latest
