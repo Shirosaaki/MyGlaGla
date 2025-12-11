@@ -49,8 +49,22 @@ jobs:
           mkdir -p dist
           stack build --copy-bins --local-bin-path dist
 
+      - name: Get version from cabal
+        id: version
+        run: |
+          VERSION=$(grep '^version:' glados.cabal | head -1 | awk '{print $2}')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
 
-            New version: ${{ steps.semver.outputs.new_version }}
+      - name: Create Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            Release version ${{ steps.version.outputs.version }}
+            Commit: ${{ github.sha }}
           artifacts: ./dist/glados
           artifactErrorsFailBuild: true
           draft: false
