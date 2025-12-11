@@ -50,22 +50,76 @@ jobs:
           stack build --copy-bins --local-bin-path dist
           mv dist/glados-exe dist/glados
 
-      - name: Get version from cabal file
-        id: version
+      - name: Calculate semantic version bump
+        id: semver
         run: |
-          VERSION=$(grep '^version:' glados.cabal | head -1 | awk '{print $2}')
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          # Get current version from cabal file
+          CURRENT_VERSION=$(grep '^version:' glados.cabal | head -1 | awk '{print $2}')
+          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          
+          # Parse current version (0.x.y.z format)
+          IFS='.' read -r MAJOR MINOR PATCH BUILD <<< "$CURRENT_VERSION"
+          
+          # Calculate lines changed in this commit
+          if [ "${{ github.event_name }}" == "push" ]; then
+            LINES_CHANGED=$(git diff --numstat HEAD~1..HEAD 2>/dev/null | awk '{sum+=$1+$2} END {print sum}' || echo "0")
+          else
+            LINES_CHANGED=0
+          fi
+          
+          echo "lines_changed=$LINES_CHANGED" >> $GITHUB_OUTPUT
+          
+          # Determine version bump based on lines changed
+          # Patch: < 50 lines, Minor: 50-200 lines, Major: > 200 lines
+          if [ "$LINES_CHANGED" -lt 50 ]; then
+            # Patch bump
+            NEW_BUILD=$((BUILD + 1))
+            NEW_VERSION="$MAJOR.$MINOR.$PATCH.$NEW_BUILD"
+            BUMP_TYPE="patch"
+          elif [ "$LINES_CHANGED" -lt 200 ]; then
+            # Minor bump
+            NEW_PATCH=$((PATCH + 1))
+            NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH.0"
+            BUMP_TYPE="minor"
+          else
+            # Major bump
+            NEW_MINOR=$((MINOR + 1))
+            NEW_VERSION="$MAJOR.$NEW_MINOR.0.0"
+            BUMP_TYPE="major"
+          fi
+          
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "bump_type=$BUMP_TYPE" >> $GITHUB_OUTPUT
+          echo "tag=v$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Update version in cabal file
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          # Update version in glados.cabal
+          sed -i "s/^version:.*$/version:        ${{ steps.semver.outputs.new_version }}/" glados.cabal
+          echo "Updated glados.cabal to version ${{ steps.semver.outputs.new_version }}"
+          cat glados.cabal | grep '^version:'
+
+      - name: Commit version bump
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add glados.cabal
+          git commit -m "chore: bump version to ${{ steps.semver.outputs.new_version }} (${{ steps.semver.outputs.bump_type }})" || true
+          git push || true
 
       - name: Create Release with Assets
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: ncipollo/release-action@v1
         with:
-          tag: ${{ steps.version.outputs.tag }}
-          name: Release ${{ steps.version.outputs.version }}
+          tag: ${{ steps.semver.outputs.tag }}
+          name: Release ${{ steps.semver.outputs.new_version }}
           body: |
-            Automated release created on compilation success.
-            Version: ${{ steps.version.outputs.version }}
+            Automated ${{ steps.semver.outputs.bump_type }} release based on commit size.
+            Lines changed: ${{ steps.semver.outputs.lines_changed }}
+            Current version: ${{ steps.semver.outputs.current_version }}
+            New version: ${{ steps.semver.outputs.new_version }}
           artifacts: ./dist/glados
           artifactErrorsFailBuild: true
           draft: false
@@ -109,11 +163,10 @@ jobs:
           docsify generate ./docs --sidebar _sidebar.md
 
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./docs
-          cname: glados.epitech.eu
 
   mirror:
     runs-on: ubuntu-latest
