@@ -39,11 +39,26 @@ sexpr :: Parser SExpr
 sexpr = spaceConsumer *> (atom <|> list) <* spaceConsumer
 
 atom :: Parser SExpr
-atom = boolAtom <|> try intAtom <|> symbolAtom
+atom = boolAtom <|> charAtom <|> stringAtom <|> try floatAtom <|> try intAtom <|> symbolAtom
 
 boolAtom :: Parser SExpr
 boolAtom = (string "#t" >> pure (SBool True))
        <|> (string "#f" >> pure (SBool False))
+
+-- | Parse character literals: #\a, #\newline, #\space, etc.
+charAtom :: Parser SExpr
+charAtom = do
+  _ <- try (string "#\\")
+  c <- satisfy (const True)
+  return (SChar c)
+
+-- | Parse string literals: "hello"
+stringAtom :: Parser SExpr
+stringAtom = do
+  _ <- char '"'
+  chars <- many (noneOf "\"")
+  _ <- char '"'
+  return (SString chars)
 
 negativeInt :: Parser Int
 negativeInt = char '-' >> some digitChar >>= \d -> return (-(read d))
@@ -53,6 +68,16 @@ positiveInt = char '+' >> some digitChar >>= \d -> return (read d)
 
 unsignedInt :: Parser Int
 unsignedInt = read <$> some digitChar
+
+-- | Parse floating point numbers: 3.14, -2.5, etc.
+floatAtom :: Parser SExpr
+floatAtom = do
+  sign <- option "" (string "-" <|> string "+")
+  intPart <- some digitChar
+  _ <- char '.'
+  fracPart <- some digitChar
+  let floatStr = sign ++ intPart ++ "." ++ fracPart
+  return (SFloat (read floatStr))
 
 intAtom :: Parser SExpr
 intAtom = SInt <$> (try negativeInt <|> try positiveInt <|> unsignedInt)

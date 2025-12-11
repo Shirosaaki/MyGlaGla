@@ -4,12 +4,12 @@
 -- File description:
 -- lib module
 -}
-module Lib (SExpr(..), Ast(..), sexprToAST, evalAST, EvalResult,
+module Lib (SExpr(..), Ast(..), Type(..), Value(..), Env, sexprToAST, evalAST, EvalResult,
             defName, defValue,
             parseSExpr, parseSExprMultiple, parseSExprEither,
             parseSExprMultipleEither) where
 
-import AST (SExpr(..), Ast(..), sexprToAST, evalAST, EvalResult,
+import AST (SExpr(..), Ast(..), Type(..), Value(..), Env, sexprToAST, evalAST, EvalResult,
             defName, defValue)
 import Parser (parseSExpr, parseSExprMultiple, parseSExprEither,
                parseSExprMultipleEither)
