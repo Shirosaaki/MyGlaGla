@@ -35,6 +35,12 @@ This guide outlines the recommended coding style for TSL (The Scripting Language
 - **Modularity**: Break code into smaller, reusable functions where appropriate.
 - **Error Handling**: Use clear and consistent error handling strategies.
 
+## File Organization
+
+- **File Naming**: Use lowercase with hyphens for file names (e.g., `user-profile.tsl`).
+- **File Header**: Include a brief description of the file's purpose at the top.
+- **File Ending**: Ensure files end with a newline character.
+
 ## 📚 Example Code (bad practice to good practice)
 
 ```tsl
@@ -49,6 +55,11 @@ Deschodt badExample(a -> int,b -> int)->int
 ```
 
 ```tsl
+desnote ==============================================
+desnote                 example.tslang
+desnote  Author: shirosaaki
+desnote  Date: 2025-12-11
+desnote =============================================
 desnote Good Practice Example
 Deschodt goodExample(a -> int, b -> int) -> int
     eric result = 0 -> int
