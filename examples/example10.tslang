@@ -1,5 +1,3 @@
-cz PI = 3.1415 -> float
-
 desnum Jour:
     Lundi
     Mardi
@@ -7,7 +5,7 @@ desnum Jour:
 
 Deschodt Eric() -> int
     eric j = Mardi -> Jour
-    peric("PI = {PI}, Jour = {j}")
+    peric("Jour = {j}")
     deschodt 0
 
-desnote print PI = 3.1415, Jour = 1
+desnote Jour = 1

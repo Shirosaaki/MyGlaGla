@@ -2,11 +2,7 @@
 
 ## Description
 
-The glados project is split into two parts :
-
-* A LISP interpreter. It supports basic LISP functionalities including arithmetic operations, list manipulations, and function definitions.
-
-* A interpreter of this own programming language. Us will call it TheShowLang (TSL). TSL is a simple language that supports variable assignments, arithmetic operations, and basic control structures.
+A compilator of this own programming language. Us will call it TheShowLang (TSL). TSL is a simple language that supports variable assignments, arithmetic operations, and basic control structures.
 
 All code is written in Haskell.
 
@@ -39,24 +35,26 @@ To clean all artifacts including dependencies, use the following command:
 make fclean
 ```
 
-## Running the interpreter
+## Running the Compilator
 
-To run the interpreter, use the following command:
-
+To run the compilator, use the following command:
 ```bash
 ./glados < <path_to_input_file>
 ```
+or
+```bash
+./glados
+```
+to enter the interactive console.
 
 ## Unit tests
 
 To run the unit tests, use the following command:
-
 ```bash
 make run_test
 ```
 
 To run the unit tests with coverage report, use the following command:
-
 ```bash
 make test_coverage
 ```

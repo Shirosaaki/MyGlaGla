@@ -1,13 +1,12 @@
 # 📖 User Guide
 
-Welcome to the GLADOS User Guide! This document provides an overview of the features and functionalities of GLADOS, a powerful interpreter for the LISP / TSL (TheShowLang). Whether you're a beginner or an experienced user, this guide will help you get started and make the most out of GLADOS.
+Welcome to the GLADOS User Guide! This document provides an overview of the features and functionalities of GLADOS, a powerful compilator for the TSL (TheShowLang). Whether you're a beginner or an experienced user, this guide will help you get started and make the most out of GLADOS.
 
 ## ✨ Features
 
 GLADOS offers the following features:
-- **🟦 LISP Interpreter**: Execute LISP code with support for arithmetic operations, list manipulations, and function definitions.
-- **🟩 TSL Interpreter**: Run TSL code, a simple programming language that supports variable assignments, arithmetic operations, and basic control structures.
-- **▶️ Interactive REPL**: Experiment with LISP and TSL code in an interactive Read-Eval-Print Loop (REPL) environment.
+- **🟩 TSL Compilator**: Compile TSL code, a simple programming language that supports variable assignments, arithmetic operations, and basic control structures.
+- **▶️ Interactive REPL**: Experiment with TSL code in an interactive Read-Eval-Print Loop (REPL) environment.
 - **⚠️ Error Handling**: Get informative error messages to help you debug your code.
 
 ## 🚀 Getting Started
@@ -23,9 +22,9 @@ To get started with GLADOS, follow these steps:
     ```bash
     make
     ```
-3. **▶️ Running the Interpreter**: You can run the interpreter with a LISP or TSL file as input:
+3. **▶️ Running the Compilator**: You can run the compilator with a TSL file as input:
     ```bash
-    ./glados < path_to_your_file.lisp
+    ./glados
     ```
     or
     ```bash
@@ -34,17 +33,16 @@ To get started with GLADOS, follow these steps:
 
 ## ✍️ Writing Code
 
-Here are some basic examples of LISP and TSL code to get you started:
-### 🧠 LISP Example
-```lisp
-(define (factorial n)
-  (if (eq? n 1)
-      1
-      (* n (factorial (- n 1)))))
-(factorial 5) ; Returns 120
-```
+The project can be used in two ways: through the interactive console or by writing TSL code in files.
+### 1. **Interactive Console**
+Launch the interactive console by running `./glados` without any arguments. You can type TSL code directly into the console, and it will be evaluated immediately.
 
-### 🧩 TSL Example
+To write multi-line code, type `:code` to enter code mode, and `:end` to exit code mode and evaluate the code.
+
+### 2. **TSL Code Files**
+You can write TSL code in files with a `.tsl` extension and run them using the compilator.
+
+Here are some basic examples of TSL code to get you started:
 ```tsl
 Deschodt factoriel(n -> int) -> int
     erif (n <= 1):
