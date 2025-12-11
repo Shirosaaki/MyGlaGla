@@ -42,6 +42,44 @@ jobs:
             echo "Style checks produced output; failing CI."
             exit 1
           fi
+
+      - name: Build release artifact
+        run: |
+          # Build the release artifact (compiled executable/package)
+          mkdir -p dist
+          stack build --copy-bins --local-bin-path dist
+
+      - name: Get version from cabal file
+        id: version
+        run: |
+          VERSION=$(grep '^version:' glados.cabal | head -1 | awk '{print $2}')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          release_name: Release ${{ steps.version.outputs.version }}
+          body: |
+            Automated release created on compilation success.
+            Version: ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+
+      - name: Upload release artifacts
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/glados
+          asset_name: glados-${{ steps.version.outputs.version }}
+          asset_content_type: application/octet-stream
   test:
     runs-on: ubuntu-latest
     needs: compile
@@ -55,9 +93,38 @@ jobs:
           # Run the project's unit test target. This step will fail the job
           # if tests fail (non-zero exit code).
           make run_test
+
+  docs:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository != 'EpitechPGE3-2025/G-FUN-500-NCE-5-2-glados-1'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install docsify-cli
+        run: npm install -g docsify-cli
+
+      - name: Build documentation
+        run: |
+          # Docsify is a static site generator - it builds the docs
+          docsify generate ./docs --sidebar _sidebar.md
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs
+          cname: glados.epitech.eu
+
   mirror:
     runs-on: ubuntu-latest
-    needs: [compile, test]
+    needs: [compile, test, docs]
     if: |
       github.repository != 'EpitechPGE3-2025/G-FUN-500-NCE-5-2-glados-1'
       && github.event_name == 'push'
