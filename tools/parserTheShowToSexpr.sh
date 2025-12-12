@@ -6,7 +6,121 @@ awk '
 BEGIN {
     ntokens = 0
     pos = 1
+    embed_ntokens = 0
 }
+
+function tokenize_expr_string(exprStr,    i,c,buf,oldNtokens){
+    oldNtokens = ntokens
+    ntokens = 0
+    
+    i = 1
+    while (i <= length(exprStr)) {
+        c = substr(exprStr, i, 1)
+        if (is_space(c)) { i++; continue }
+        
+        if (c ~ /[:(),\[\]=*+\-<>!]/) {
+            # "->"
+            if (c=="-" && substr(line,i+1,1)==">") {
+                add_token("ARROW", "->"); i+=2; continue
+            }
+            # "+="
+            if (c=="+" && substr(line,i+1,1)=="=") {
+                add_token("OP", "+="); i+=2; continue
+            }
+            # "=="
+            if (c=="=" && substr(line,i+1,1)=="=") {
+                add_token("OP", "=="); i+=2; continue
+            }
+            # "!="
+            if (c=="!" && substr(line,i+1,1)=="=") {
+                add_token("OP", "!="); i+=2; continue
+            }
+            # "<="
+            if (c=="<" && substr(line,i+1,1)=="=") {
+                add_token("OP", "<="); i+=2; continue
+            }
+            # ">="
+            if (c==">" && substr(line,i+1,1)=="=") {
+                add_token("OP", ">="); i+=2; continue
+            }
+            add_token("PUNC", c); i++; continue
+        }
+        if (is_digit(c)) {
+            buf = c; i++
+            while (i <= length(exprStr)) {
+                c = substr(exprStr, i, 1)
+                if (!is_digit(c)) break
+                buf = buf c; i++
+            }
+            add_token("INT", buf); continue
+        }
+        
+        if (is_alpha(c)) {
+            buf = c; i++
+            while (i <= length(exprStr)) {
+                c = substr(exprStr, i, 1)
+                if (!(is_alpha(c) || is_digit(c))) break
+                buf = buf c; i++
+            }
+            add_token("IDENT", buf); continue
+        }
+        
+        i++
+    }
+    
+    embed_ntokens = ntokens
+    ntokens = oldNtokens
+}
+
+function parse_expr_from_string(exprStr,    savePos,result){
+    tokenize_expr_string(exprStr)
+    savePos = pos
+    pos = 1
+    
+    result = parse_expr_embedded()
+    
+    pos = savePos
+    return result
+}
+
+function parse_expr_embedded(    expr,op,right){
+    expr = parse_term_embedded()
+    while (pos <= embed_ntokens && (peek_val() == "+" || peek_val() == "-")) {
+        op = consume()
+        right = parse_term_embedded()
+        expr = "SList [" emit_symbol(op) ", " expr ", " right "]"
+    }
+    return expr
+}
+
+function parse_term_embedded(    expr,op,right){
+    expr = parse_primary_embedded()
+    while (pos <= embed_ntokens && peek_val() == "*") {
+        op = consume()
+        right = parse_primary_embedded()
+        expr = "SList [" emit_symbol(op) ", " expr ", " right "]"
+    }
+    return expr
+}
+
+function parse_primary_embedded(    k,v,expr,idx){
+    k = peek_kind(); v = peek_val()
+    if (k == "INT") { consume(); return emit_int(v) }
+    if (k == "IDENT") { 
+        consume()
+        expr = emit_symbol(v)
+        # handle array indexing
+        while (pos <= embed_ntokens && peek_val() == "[") {
+            consume() # "["
+            idx = parse_expr_embedded()
+            consume() # "]"
+            expr = "SList [" emit_symbol("index") ", " expr ", " idx "]"
+        }
+        return expr
+    }
+    return emit_symbol("UNKNOWN")
+}
+
 
 function trim(s){sub(/^[ \t\r\n]+/,"",s);sub(/[ \t\r\n]+$/,"",s);return s}
 
@@ -28,7 +142,7 @@ function tokenize_line(line,    i,c,buf){
         if (is_space(c)) { i++; continue }
 
         # punctuation / operators
-        if (c ~ /[:(),\[\]=*+\-]/) {
+        if (c ~ /[:(),\[\]=*+\-<>!]/) {
             # "->"
             if (c=="-" && substr(line,i+1,1)==">") {
                 add_token("ARROW", "->"); i+=2; continue
@@ -36,6 +150,22 @@ function tokenize_line(line,    i,c,buf){
             # "+="
             if (c=="+" && substr(line,i+1,1)=="=") {
                 add_token("OP", "+="); i+=2; continue
+            }
+            # "=="
+            if (c=="=" && substr(line,i+1,1)=="=") {
+                add_token("OP", "=="); i+=2; continue
+            }
+            # "!="
+            if (c=="!" && substr(line,i+1,1)=="=") {
+                add_token("OP", "!="); i+=2; continue
+            }
+            # "<="
+            if (c=="<" && substr(line,i+1,1)=="=") {
+                add_token("OP", "<="); i+=2; continue
+            }
+            # ">="
+            if (c==">" && substr(line,i+1,1)=="=") {
+                add_token("OP", ">="); i+=2; continue
             }
             add_token("PUNC", c); i++; continue
         }
@@ -92,7 +222,14 @@ function emit_string(v){ return "SString " v }   # v still has the quotes
 function parse_primary(    k,v,expr,expr2,first){
     k=peek_kind(); v=peek_val()
     if (k=="INT")   { consume(); return emit_int(v) }
-    if (k=="STRING"){ consume(); return emit_string(v) }
+    if (k=="STRING") { 
+        v = consume()
+        if (index(v, "{") > 0) {
+            return parse_interpolated_string(v)
+        } else {
+            return emit_string(v)
+        }
+    }
     if (k=="IDENT") {
         consume()
         expr = emit_symbol(v)
@@ -139,14 +276,30 @@ function parse_term(    expr,op,right){
 }
 
 function parse_expr(    expr,op,right){
-    expr = parse_term()
-    while (peek_val()=="+" || peek_val()=="-") {
-        op=consume()
-        right=parse_term()
-        expr="SList [" emit_symbol(op) ", " expr ", " right "]"
+    expr = parse_comparison()
+    return expr
+}
+
+function parse_comparison(    expr,op,right){
+    expr = parse_add_expr()
+    while (peek_val() ~ /^(==|!=|<|>|<=|>=)$/) {
+        op = consume()
+        right = parse_add_expr()
+        expr = "SList [" emit_symbol(op) ", " expr ", " right "]"
     }
     return expr
 }
+
+function parse_add_expr(    expr,op,right){
+    expr = parse_term()
+    while (peek_val() == "+" || peek_val() == "-") {
+        op = consume()
+        right = parse_term()
+        expr = "SList [" emit_symbol(op) ", " expr ", " right "]"
+    }
+    return expr
+}
+
 
 # ------------- block & statements -------------
 
@@ -159,7 +312,13 @@ function parse_var_decl(    name,init,typeS){
         init=emit_symbol("unit")
     }
     consume() # "->"
-    typeS=consume()
+    typeS=consume()  # "int"
+    # consume [] if present
+    if (peek_val()=="[") {
+        consume() # "["
+        consume() # "]"
+        typeS = typeS "[]"
+    }
     return "SList [" \
            emit_symbol("eric") ", " \
            emit_symbol(name) ", " \
@@ -168,30 +327,71 @@ function parse_var_decl(    name,init,typeS){
            "]"
 }
 
-function parse_if(    cond,thenS,elseS){
+
+function parse_if(    cond,thenBody,elseBody){
     consume() # "("
-    cond=parse_expr()
+    cond = parse_expr()
     consume() # ")"
     consume() # ":"
-    thenS = emit_symbol("block")
-    if (peek_val()=="deschelse") {
-        consume(); consume() # ":"
-        elseS = emit_symbol("block")
+    
+    # parse the then-body (next statement)
+    thenBody = parse_stmt()
+    
+    # check for else
+    if (peek_val() == "deschelse") {
+        consume() # "deschelse"
+        consume() # ":"
+        elseBody = parse_stmt()
     } else {
-        elseS = emit_symbol("unit")
+        elseBody = emit_symbol("unit")
     }
-    return "SList [" emit_symbol("if") ", " cond ", " thenS ", " elseS "]"
+    
+    return "SList [" \
+           emit_symbol("if") ", " \
+           cond ", " \
+           thenBody ", " \
+           elseBody \
+           "]"
 }
 
-function parse_for(    hdr){
-    hdr=""
-    while (peek_val() != ":") {
-        if (hdr != "") hdr = hdr " "
-        hdr = hdr peek_val()
-        consume()
-    }
+function parse_while(    cond,body){
+    consume()  # "("
+    cond = parse_expr()
+    consume()  # ")"
     consume()  # ":"
-    return "SList [" emit_symbol("aer") ", " emit_symbol(hdr) "]"
+    
+    body = parse_stmt()
+    
+    return "SList [" \
+           emit_symbol("while") ", " \
+           cond ", " \
+           body \
+           "]"
+}
+
+
+function parse_for(    loopVar,iterExpr,body){
+    # expecting: var in expr
+    loopVar = consume()  # "i" or "j"
+    
+    if (peek_val() == "in") {
+        consume()  # "in"
+    }
+    
+    # now parse the iterator expression (e.g., range(0, 31))
+    iterExpr = parse_expr()
+    
+    consume()  # ":"
+    
+    # parse the body (next statement or block)
+    body = parse_stmt()
+    
+    return "SList [" \
+           emit_symbol("aer") ", " \
+           emit_symbol(loopVar) ", " \
+           iterExpr ", " \
+           body \
+           "]"
 }
 
 function parse_return_like(    expr){
@@ -202,19 +402,18 @@ function parse_return_like(    expr){
     return "SList [" emit_symbol("return") "]"
 }
 
-function parse_stmt(    k,v,lhs,rhs,op,name,exprs,first){
+function parse_stmt(    k,v,lhs,rhs,op,name,exprs,first,typeS){
     k=peek_kind(); v=peek_val()
 
     if (v=="eric") { consume(); return parse_var_decl() }
     if (v=="deschodt"){ consume(); return parse_return_like() }
     if (v=="erif"){ consume(); return parse_if() }
     if (v=="aer"){ consume(); return parse_for() }
-    if (v=="darius"){ consume(); return "SList [" emit_symbol("while") ", " emit_symbol("cond") ", " emit_symbol("block") "]" }
+    if (v=="darius"){ consume(); return parse_while() }
     if (v=="deschreak"){ consume(); return emit_symbol("break") }
     if (v=="deschontinue"){ consume(); return emit_symbol("continue") }
 
     if (v=="peric"){
-        # print call as generic call
         name = consume()
         consume() # "("
         exprs = ""
@@ -238,9 +437,27 @@ function parse_stmt(    k,v,lhs,rhs,op,name,exprs,first){
         return "SList [" emit_symbol("comment") ", SString \"" v "\" ]"
     }
 
-    # assignment or expression
+    # assignment or array type annotation or expression
     if (k=="IDENT") {
         lhs=parse_postfix()
+        
+        # Check for -> type (array slot type annotation)
+        if (peek_val()=="->") {
+            consume() # "->"
+            typeS=consume() # "int"
+            # consume [] if present
+            if (peek_val()=="[") {
+                consume() # "["
+                consume() # "]"
+                typeS = typeS "[]"
+            }
+            return "SList [" \
+                   emit_symbol("type-annot") ", " \
+                   lhs ", " \
+                   emit_symbol(typeS) \
+                   "]"
+        }
+        
         if (peek_val()=="=" || peek_val()=="+=") {
             op=consume()
             rhs=parse_expr()
@@ -252,6 +469,57 @@ function parse_stmt(    k,v,lhs,rhs,op,name,exprs,first){
     consume()
     return emit_symbol("UNKNOWN-STMT")
 }
+
+function parse_interpolated_string(s,    parts,i,c,expr,lit,first,exprResult){
+    s = substr(s, 2, length(s)-2)
+    
+    parts = ""
+    first = 1
+    i = 1
+    lit = ""
+    
+    while (i <= length(s)) {
+        c = substr(s, i, 1)
+        
+        if (c == "{") {
+            if (lit != "") {
+                if (!first) parts = parts ", "
+                parts = parts "SString \"" lit "\""
+                first = 0
+                lit = ""
+            }
+            
+            i++
+            expr = ""
+            depth = 1
+            while (i <= length(s) && depth > 0) {
+                c = substr(s, i, 1)
+                if (c == "{") depth++
+                if (c == "}") depth--
+                if (depth > 0) expr = expr c
+                i++
+            }
+            
+            exprResult = parse_expr_from_string(expr)
+            if (!first) parts = parts ", "
+            parts = parts exprResult
+            first = 0
+            continue
+        }
+        
+        lit = lit c
+        i++
+    }
+    
+    if (lit != "") {
+        if (!first) parts = parts ", "
+        parts = parts "SString \"" lit "\""
+    }
+    
+    return "SList [SSymbol \"string-interp\", SList [" parts "]]"
+}
+
+
 
 function parse_param_list(    params,name,typeS,first){
     params=""; first=1
