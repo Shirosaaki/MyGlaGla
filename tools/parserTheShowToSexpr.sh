@@ -588,10 +588,34 @@ function parse_struct_decl(    name,fields,fname,ftype,first){
     return "SList [" emit_symbol("struct") ", " emit_symbol(name) ", SList [" fields "] ]"
 }
 
-function parse_enum_decl(    name){
-    name=consume()
-    return "SList [" emit_symbol("enum") ", " emit_symbol(name) "]"
+function parse_enum_decl(    name,variants,first,v){
+    name=consume()  # "Jour"
+    consume()  # ":"
+    
+    variants = ""
+    first = 1
+    while (pos <= ntokens) {
+        v = peek_val()
+        # stop at next top-level keyword or when we reach a non-IDENT
+        if (v == "Deschodt" || v == "destruct" || v == "desnum" || peek_kind() == "COMMENT") {
+            break
+        }
+        if (peek_kind() == "IDENT") {
+            if (!first) variants = variants ", "
+            variants = variants emit_symbol(consume())
+            first = 0
+        } else {
+            break
+        }
+    }
+    
+    return "SList [" \
+           emit_symbol("enum") ", " \
+           emit_symbol(name) ", " \
+           "SList [" variants "]" \
+           "]"
 }
+
 
 function parse_toplevel(    v){
     v=peek_val()
