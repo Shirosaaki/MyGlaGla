@@ -56,7 +56,7 @@ main = hspec $ do
             sexprToAST (SList []) `shouldBe` Right (AstList [])
         it "converts define form" $
             sexprToAST (SList [SSymbol "define", SSymbol "x", SInt 1])
-                `shouldBe` Right (Define "x" (AstInt 1))
+                `shouldBe` Right (Define "x" Nothing (AstInt 1))
         it "returns Left for malformed define" $
             sexprToAST (SList [SSymbol "define", SSymbol "x"])
                 `shouldSatisfy` isLeft
@@ -78,7 +78,7 @@ main = hspec $ do
         it "evaluates AstBool False" $
             eval (AstBool False) `shouldBe` Just (AstBool False)
         it "evaluates Define" $
-            eval (Define "x" (AstInt 42)) `shouldBe` Just AstVoid
+            eval (Define "x" Nothing (AstInt 42)) `shouldBe` Just AstVoid
         it "evaluates AstInt" $
             eval (AstInt 5) `shouldBe` Just (AstInt 5)
         it "evaluates AstSymbol (unbound)" $
@@ -450,8 +450,8 @@ main = hspec $ do
 
     describe "Ast Eq and Show instances" $ do
         it "Ast Eq works for Define" $ do
-            (Define "x" (AstInt 1) == Define "x" (AstInt 1)) `shouldBe` True
-            (Define "x" (AstInt 1) == Define "y" (AstInt 1)) `shouldBe` False
+            (Define "x" Nothing (AstInt 1) == Define "x" Nothing (AstInt 1)) `shouldBe` True
+            (Define "x" Nothing (AstInt 1) == Define "y" Nothing (AstInt 1)) `shouldBe` False
         it "Ast Eq works for AstInt" $ do
             (AstInt 1 == AstInt 1) `shouldBe` True
             (AstInt 1 == AstInt 2) `shouldBe` False
@@ -462,7 +462,7 @@ main = hspec $ do
             (AstBool True == AstBool True) `shouldBe` True
             (AstBool True == AstBool False) `shouldBe` False
         it "Ast Show works for all constructors" $ do
-            show (Define "x" (AstInt 1)) `shouldSatisfy` (not . null)
+            show (Define "x" Nothing (AstInt 1)) `shouldSatisfy` (not . null)
             show (AstInt 42) `shouldSatisfy` (not . null)
             show (AstSymbol "foo") `shouldSatisfy` (not . null)
             show (AstBool True) `shouldSatisfy` (not . null)
@@ -475,9 +475,9 @@ main = hspec $ do
 
     describe "Define field accessors" $ do
         it "defName accessor works" $
-            defName (Define "myVar" (AstInt 42)) `shouldBe` "myVar"
+            defName (Define "myVar" Nothing (AstInt 42)) `shouldBe` "myVar"
         it "defValue accessor works" $
-            defValue (Define "myVar" (AstInt 42)) `shouldBe` AstInt 42
+            defValue (Define "myVar" Nothing (AstInt 42)) `shouldBe` AstInt 42
 
     describe "Paths_glados coverage" $ do
         it "exposes package version" $

@@ -4,10 +4,8 @@
 -- File description:
 -- file where the AST is defined
 -}
-module AST (SExpr(..), Ast(..), Type(..), Value(..), Env, sexprToAST, evalAST, EvalResult,
+module AST (SExpr(..), Ast(..), Type(..), Env, sexprToAST, evalAST, EvalResult,
             defName, defValue) where
-
-import qualified Data.Map as Map
 
 data SExpr = SInt Int
             | SFloat Double
@@ -33,17 +31,8 @@ data Type = TInt
           deriving (Show, Eq, Ord)
 
 -- | Values at runtime
-data Value = VInt Int
-           | VFloat Double
-           | VBool Bool
-           | VString String
-           | VChar Char
-           | VVoid
-           | VArray (Map.Map Int Value)
-           | VPointer (Maybe Value)
-           | VStruct String (Map.Map String Value)
-           | VClosure [String] Ast Env
-           deriving (Show, Eq)
+-- Runtime values are represented using the `Ast` constructors directly.
+-- Closures are represented as `AstClosure` which embeds the env.
 
 data Ast = Define String (Maybe Type) Ast           -- variable/function definition with optional type
          | AstInt Int
@@ -83,8 +72,8 @@ defValue :: Ast -> Ast
 defValue (Define _ _ v) = v
 defValue _ = error "defValue: not a Define"
 
-type Env = [(String, Value)]
-type EvalResult = Either String (Value, Env)
+type Env = [(String, Ast)]
+type EvalResult = Either String (Ast, Env)
 
 -- | Parse S-expression to AST
 sexprToAST :: SExpr -> Either String Ast
@@ -160,13 +149,13 @@ makeCallArgs fnAst args =
 
 -- | Evaluation with enhanced type support
 evalAST :: Env -> Ast -> EvalResult
-evalAST env (AstInt n) = Right (VInt n, env)
-evalAST env (AstFloat f) = Right (VFloat f, env)
-evalAST env (AstBool b) = Right (VBool b, env)
-evalAST env (AstString s) = Right (VString s, env)
-evalAST env (AstChar c) = Right (VChar c, env)
-evalAST env AstVoid = Right (VVoid, env)
-evalAST env closure@(AstClosure _ _ _) = Right (valueFromClosure closure, env)
+evalAST env (AstInt n) = Right (AstInt n, env)
+evalAST env (AstFloat f) = Right (AstFloat f, env)
+evalAST env (AstBool b) = Right (AstBool b, env)
+evalAST env (AstString s) = Right (AstString s, env)
+evalAST env (AstChar c) = Right (AstChar c, env)
+evalAST env AstVoid = Right (AstVoid, env)
+evalAST env closure@(AstClosure _ _ _) = Right (closure, env)
 evalAST env (AstSymbol s) =
     case lookup s env of
         Just v -> Right (v, env)
@@ -174,17 +163,17 @@ evalAST env (AstSymbol s) =
 evalAST env (Define name _ty val) =
     case val of
         AstLambda params body ->
-            let updatedEnv = (name, VClosure params body updatedEnv) : env
-            in Right (VVoid, updatedEnv)
+            let updatedEnv = (name, AstClosure params body updatedEnv) : env
+            in Right (AstVoid, updatedEnv)
         _ ->
             case evalAST env val of
-                Right (v, env') -> Right (VVoid, (name, v) : env')
+                Right (v, env') -> Right (AstVoid, (name, v) : env')
                 Left err -> Left err
 evalAST env (AstLambda params body) =
-    Right (VClosure params body env, env)
+    Right (AstClosure params body env, env)
 evalAST env (AstList xs) = evalSeq env xs
   where
-    evalSeq e [] = Right (VString "list", e)  -- Empty list
+    evalSeq e [] = Right (AstList [], e)  -- Empty list
     evalSeq e [x] = evalAST e x
     evalSeq e (x:xs') =
         case evalAST e x of
@@ -192,8 +181,8 @@ evalAST env (AstList xs) = evalSeq env xs
             Left err -> Left err
 evalAST env (IfElse cond thenExpr elseExpr) =
     case evalAST env cond of
-        Right (VBool True, env1) -> evalAST env1 thenExpr
-        Right (VBool False, env1) -> evalAST env1 elseExpr
+        Right (AstBool True, env1) -> evalAST env1 thenExpr
+        Right (AstBool False, env1) -> evalAST env1 elseExpr
         Right (_, _) -> Left "if: condition must be a boolean"
         Left err -> Left err
 evalAST env (Block stmts) = evalBlock env stmts
@@ -202,7 +191,7 @@ evalAST _ other = Left ("Unsupported AST node: " ++ show other)
 
 -- | Evaluate a block of statements
 evalBlock :: Env -> [Ast] -> EvalResult
-evalBlock env [] = Right (VVoid, env)
+evalBlock env [] = Right (AstVoid, env)
 evalBlock env [s] = evalAST env s
 evalBlock env (s:rest) =
     case evalAST env s of
@@ -214,40 +203,24 @@ evalCall :: Env -> Ast -> [Ast] -> EvalResult
 evalCall env (AstSymbol op) args = evalOpCall env op args
 evalCall env fnAst args =
     case evalAST env fnAst of
-        Right (VClosure _ _ _, _) ->
+        Right (AstClosure _ _ _, _) ->
             evalClosureCall env args fnAst
         Right (other, _) ->
-            Left ("attempt to apply non-procedure: " ++
-                  showValue other)
+            Left ("attempt to apply non-procedure: " ++ show other)
         Left err -> Left err
 
 -- | Helper to convert closure AST to value
-valueFromClosure :: Ast -> Value
-valueFromClosure (AstClosure params body env) = VClosure params body env
-valueFromClosure _ = error "valueFromClosure: not a closure"
-
-showValue :: Value -> String
-showValue (VInt n) = show n
-showValue (VFloat f) = show f
-showValue (VBool True) = "#t"
-showValue (VBool False) = "#f"
-showValue (VString s) = "\"" ++ s ++ "\""
-showValue (VChar c) = "\'" ++ [c] ++ "\'"
-showValue (VVoid) = "#<void>"
-showValue (VClosure _ _ _) = "#<procedure>"
-showValue (VArray _) = "#<array>"
-showValue (VPointer _) = "#<pointer>"
-showValue (VStruct n _) = "#<struct:" ++ n ++ ">"
+-- Closures are represented as `AstClosure`; printing relies on `show` for `Ast`.
 
 evalClosureCall :: Env -> [Ast] -> Ast -> EvalResult
 evalClosureCall env args closureAst =
     case evalAST env closureAst of
-        Right (vc@(VClosure params _ _), _) ->
+        Right (vc@(AstClosure params _ _), _) ->
             evalClosureCallChecked env args closureAst params vc
         _ -> Left "Invalid closure"
 
 evalClosureCallChecked :: Env -> [Ast] -> Ast -> [String]
-                       -> Value -> EvalResult
+                       -> Ast -> EvalResult
 evalClosureCallChecked env args closureAst params _ =
     case evalArgs env args of
         Left err -> Left err
@@ -257,12 +230,12 @@ evalClosureCallChecked env args closureAst params _ =
             else Left ("wrong number of arguments: expected " ++
                       show (length params) ++ ", got " ++ show (length argVals))
 
-execClosure :: Env -> Ast -> [Value] -> EvalResult
+execClosure :: Env -> Ast -> [Ast] -> EvalResult
 execClosure env closureAst argVals =
     case evalAST env closureAst of
         Right (val, _) ->
             case val of
-                VClosure params body closureEnv ->
+                AstClosure params body closureEnv ->
                     case evalAST (zip params argVals ++ closureEnv) body of
                         Right (res, _) -> Right (res, env)
                         Left err -> Left err
@@ -282,61 +255,65 @@ evalBuiltinOp env op args =
 evalOpCall :: Env -> String -> [Ast] -> EvalResult
 evalOpCall env "if" [cond, thenExpr, elseExpr] =
     case evalAST env cond of
-        Right (VBool True, env1) -> evalAST env1 thenExpr
-        Right (VBool False, env1) -> evalAST env1 elseExpr
+        Right (AstBool True, env1) -> evalAST env1 thenExpr
+        Right (AstBool False, env1) -> evalAST env1 elseExpr
         Right (_, _) -> Left "if: condition must be a boolean"
         Left err -> Left err
 evalOpCall _ "if" _ = Left "if: bad syntax"
 evalOpCall env "eq?" args =
     case evalArgs env args of
-        Right ([a, b], env') -> Right (VBool (a == b), env')
+        Right ([a, b], env') -> Right (AstBool (a == b), env')
         Right (_, _) -> Left "eq?: expected 2 arguments"
         Left err -> Left err
 evalOpCall env "<" args =
     case evalArgs env args of
-        Right ([VInt a, VInt b], env') -> Right (VBool (a < b), env')
-        Right ([VFloat a, VFloat b], env') -> Right (VBool (a < b), env')
+        Right ([AstInt a, AstInt b], env') -> Right (AstBool (a < b), env')
+        Right ([AstFloat a, AstFloat b], env') -> Right (AstBool (a < b), env')
         Right ([_, _], _) -> Left "<: arguments must be numbers"
         Right (_, _) -> Left "<: expected 2 arguments"
         Left err -> Left err
 evalOpCall env ">" args =
     case evalArgs env args of
-        Right ([VInt a, VInt b], env') -> Right (VBool (a > b), env')
-        Right ([VFloat a, VFloat b], env') -> Right (VBool (a > b), env')
+        Right ([AstInt a, AstInt b], env') -> Right (AstBool (a > b), env')
+        Right ([AstFloat a, AstFloat b], env') -> Right (AstBool (a > b), env')
         Right ([_, _], _) -> Left ">: arguments must be numbers"
         Right (_, _) -> Left ">: expected 2 arguments"
         Left err -> Left err
 evalOpCall env "<=" args =
     case evalArgs env args of
-        Right ([VInt a, VInt b], env') -> Right (VBool (a <= b), env')
-        Right ([VFloat a, VFloat b], env') -> Right (VBool (a <= b), env')
+        Right ([AstInt a, AstInt b], env') ->
+            Right (AstBool (a <= b), env')
+        Right ([AstFloat a, AstFloat b], env') ->
+            Right (AstBool (a <= b), env')
         Right ([_, _], _) -> Left "<=: arguments must be numbers"
         Right (_, _) -> Left "<=: expected 2 arguments"
         Left err -> Left err
 evalOpCall env ">=" args =
     case evalArgs env args of
-        Right ([VInt a, VInt b], env') -> Right (VBool (a >= b), env')
-        Right ([VFloat a, VFloat b], env') -> Right (VBool (a >= b), env')
+        Right ([AstInt a, AstInt b], env') ->
+            Right (AstBool (a >= b), env')
+        Right ([AstFloat a, AstFloat b], env') ->
+            Right (AstBool (a >= b), env')
         Right ([_, _], _) -> Left ">=: arguments must be numbers"
         Right (_, _) -> Left ">=: expected 2 arguments"
         Left err -> Left err
 evalOpCall env "peric" args =
     case evalArgs env args of
-        Right (_, env') -> Right (VVoid, env')  -- Just return void, actual print handled elsewhere
+        Right (_, env') -> Right (AstVoid, env')  -- Just return void, actual print handled elsewhere
         Left err -> Left err
 evalOpCall env "range" args =
     case evalArgs env args of
-        Right ([VInt _, VInt _], env') ->
-            Right (VString ("range"), env')  -- Simplified
+        Right ([AstInt _, AstInt _], env') ->
+            Right (AstString ("range"), env')  -- Simplified
         Right (_, _) -> Left "range: expected 2 integer arguments"
         Left err -> Left err
 evalOpCall env op args =
     case lookup op env of
-        Just (VClosure _ _ _) -> evalClosureCall env args (AstSymbol op)
+        Just (AstClosure _ _ _) -> evalClosureCall env args (AstSymbol op)
         Just _ -> Left (op ++ " is not a procedure")
         Nothing -> evalBuiltinOp env op args
 
-evalArgs :: Env -> [Ast] -> Either String ([Value], Env)
+evalArgs :: Env -> [Ast] -> Either String ([Ast], Env)
 evalArgs env [] = Right ([], env)
 evalArgs env (x:xs) =
     case evalAST env x of
@@ -347,41 +324,41 @@ evalArgs env (x:xs) =
         Left err -> Left err
 
 -- | Arithmetic and comparison operations
-evalOp :: String -> [Value] -> Either String Value
-evalOp "+" [] = Right (VInt 0)
+evalOp :: String -> [Ast] -> Either String Ast
+evalOp "+" [] = Right (AstInt 0)
 evalOp "+" vals = case mapM getNumeric vals of
-    Just nums -> Right (VInt (sum nums))
+    Just nums -> Right (AstInt (sum nums))
     Nothing -> Left "+: arguments must be numbers"
-evalOp "*" [] = Right (VInt 1)
+evalOp "*" [] = Right (AstInt 1)
 evalOp "*" vals = case mapM getNumeric vals of
-    Just nums -> Right (VInt (product nums))
+    Just nums -> Right (AstInt (product nums))
     Nothing -> Left "*: arguments must be numbers"
 evalOp "-" [] = Left "-: expected at least 1 argument"
-evalOp "-" (VInt x:xs) = case mapM getInt xs of
-    Just ns -> Right (VInt (foldl (-) x ns))
+evalOp "-" (AstInt x:xs) = case mapM getInt xs of
+    Just ns -> Right (AstInt (foldl (-) x ns))
     Nothing -> Left "-: arguments must be integers"
 evalOp "-" _ = Left "-: arguments must be integers"
 evalOp "div" [] = Left "div: expected at least 1 argument"
 evalOp "div" [_] = Left "div: expected at least 2 arguments"
-evalOp "div" (VInt x:xs)
+evalOp "div" (AstInt x:xs)
     | any isZero xs = Left "div: division by zero"
     | otherwise = case mapM getInt xs of
-        Just ns -> Right (VInt (foldl div x ns))
+        Just ns -> Right (AstInt (foldl div x ns))
         Nothing -> Left "div: arguments must be integers"
-  where isZero (VInt y) = y == 0
+  where isZero (AstInt y) = y == 0
         isZero _ = False
 evalOp "div" _ = Left "div: arguments must be integers"
-evalOp "mod" [VInt _, VInt 0] = Left "mod: division by zero"
-evalOp "mod" [VInt x, VInt y] = Right (VInt (mod x y))
+evalOp "mod" [AstInt _, AstInt 0] = Left "mod: division by zero"
+evalOp "mod" [AstInt x, AstInt y] = Right (AstInt (mod x y))
 evalOp "mod" _ = Left "mod: expected exactly 2 integer arguments"
 evalOp op _ = Left ("unknown procedure: " ++ op)
 
-getInt :: Value -> Maybe Int
-getInt (VInt n) = Just n
+getInt :: Ast -> Maybe Int
+getInt (AstInt n) = Just n
 getInt _ = Nothing
 
-getNumeric :: Value -> Maybe Int
-getNumeric (VInt n) = Just n
-getNumeric (VFloat f) = Just (floor f)
+getNumeric :: Ast -> Maybe Int
+getNumeric (AstInt n) = Just n
+getNumeric (AstFloat f) = Just (floor f)
 getNumeric _ = Nothing
 

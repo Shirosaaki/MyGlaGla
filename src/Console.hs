@@ -10,7 +10,7 @@ import System.Exit (exitWith, ExitCode(ExitFailure))
 import System.IO (hPutStrLn, stderr)
 import Control.Monad.IO.Class (liftIO)
 import System.Console.Haskeline
-import AST (SExpr(..), Ast(..), Value(..), Env,
+import AST (SExpr(..), Ast(..), Env,
             sexprToAST, evalAST)
 import Parser (parseSExprMultipleEither)
 
@@ -98,28 +98,28 @@ evalSequence env (s:ss) =
 printError :: String -> IO ()
 printError msg = hPutStrLn stderr ("*** ERROR : " ++ msg)
 
-printResult' :: Value -> ReplM ()
-printResult' (VInt n) = outputStrLn (show n)
-printResult' (VFloat f) = outputStrLn (show f)
-printResult' (VBool True) = outputStrLn "#t"
-printResult' (VBool False) = outputStrLn "#f"
-printResult' (VString s) = outputStrLn s
-printResult' (VChar c) = outputStrLn [c]
-printResult' VVoid = return ()
-printResult' (VClosure _ _ _) = outputStrLn "#<procedure>"
-printResult' (VArray _) = outputStrLn "#<array>"
-printResult' (VPointer _) = outputStrLn "#<pointer>"
-printResult' (VStruct name _) = outputStrLn ("#<struct:" ++ name ++ ">")
+printResult' :: Ast -> ReplM ()
+printResult' (AstInt n) = outputStrLn (show n)
+printResult' (AstFloat f) = outputStrLn (show f)
+printResult' (AstBool True) = outputStrLn "#t"
+printResult' (AstBool False) = outputStrLn "#f"
+printResult' (AstString s) = outputStrLn s
+printResult' (AstChar c) = outputStrLn [c]
+printResult' AstVoid = return ()
+printResult' (AstClosure _ _ _) = outputStrLn "#<procedure>"
+printResult' (AstList _) = outputStrLn "#<list>"
+printResult' (AstSymbol s) = outputStrLn s
+printResult' other = outputStrLn (show other)
 
-printResultIO :: Value -> IO ()
-printResultIO (VInt n) = print n
-printResultIO (VFloat f) = print f
-printResultIO (VBool True) = putStrLn "#t"
-printResultIO (VBool False) = putStrLn "#f"
-printResultIO (VString s) = putStrLn s
-printResultIO (VChar c) = putStrLn [c]
-printResultIO VVoid = return ()
-printResultIO (VClosure _ _ _) = putStrLn "#<procedure>"
-printResultIO (VArray _) = putStrLn "#<array>"
-printResultIO (VPointer _) = putStrLn "#<pointer>"
-printResultIO (VStruct name _) = putStrLn ("#<struct:" ++ name ++ ">")
+printResultIO :: Ast -> IO ()
+printResultIO (AstInt n) = print n
+printResultIO (AstFloat f) = print f
+printResultIO (AstBool True) = putStrLn "#t"
+printResultIO (AstBool False) = putStrLn "#f"
+printResultIO (AstString s) = putStrLn s
+printResultIO (AstChar c) = putStrLn [c]
+printResultIO AstVoid = return ()
+printResultIO (AstClosure _ _ _) = putStrLn "#<procedure>"
+printResultIO (AstList _) = putStrLn "#<list>"
+printResultIO (AstSymbol s) = putStrLn s
+printResultIO other = putStrLn (show other)
