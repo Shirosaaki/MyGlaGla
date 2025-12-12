@@ -143,7 +143,6 @@ sexprToAST (SList (fn:args)) =
         SList (SSymbol "lambda" : _) -> makeCall fn args
         SList _  -> makeCall fn args
         _        -> makeCall fn args
-sexprToAST expr = Left ("Unknown expression: " ++ show expr)
 
 paramNameE :: SExpr -> Either String String
 paramNameE (SSymbol s) = Right s
@@ -199,7 +198,7 @@ evalAST env (IfElse cond thenExpr elseExpr) =
         Left err -> Left err
 evalAST env (Block stmts) = evalBlock env stmts
 evalAST env (Call fnAst args) = evalCall env fnAst args
-evalAST env other = Left ("Unsupported AST node: " ++ show other)
+evalAST _ other = Left ("Unsupported AST node: " ++ show other)
 
 -- | Evaluate a block of statements
 evalBlock :: Env -> [Ast] -> EvalResult
@@ -249,7 +248,7 @@ evalClosureCall env args closureAst =
 
 evalClosureCallChecked :: Env -> [Ast] -> Ast -> [String]
                        -> Value -> EvalResult
-evalClosureCallChecked env args closureAst params vc =
+evalClosureCallChecked env args closureAst params _ =
     case evalArgs env args of
         Left err -> Left err
         Right (argVals, _) ->
@@ -261,12 +260,13 @@ evalClosureCallChecked env args closureAst params vc =
 execClosure :: Env -> Ast -> [Value] -> EvalResult
 execClosure env closureAst argVals =
     case evalAST env closureAst of
-        Right (VClosure params body closureEnv, _) ->
-            case evalAST (zip params argVals ++ closureEnv) body of
-                Right (res, _) -> Right (res, env)
-                Left err -> Left err
-        _ -> Left "Invalid closure"
-        Right (_, _) -> Left "attempt to call non-procedure"
+        Right (val, _) ->
+            case val of
+                VClosure params body closureEnv ->
+                    case evalAST (zip params argVals ++ closureEnv) body of
+                        Right (res, _) -> Right (res, env)
+                        Left err -> Left err
+                _ -> Left "attempt to call non-procedure"
         Left err -> Left err
 
 evalBuiltinOp :: Env -> String -> [Ast] -> EvalResult
@@ -322,15 +322,12 @@ evalOpCall env ">=" args =
         Left err -> Left err
 evalOpCall env "peric" args =
     case evalArgs env args of
-        Right (argVals, env') ->
-            let msg = unwords (map showValue argVals)
-            in Right (VVoid, env')  -- Just return void, actual print handled elsewhere
+        Right (_, env') -> Right (VVoid, env')  -- Just return void, actual print handled elsewhere
         Left err -> Left err
 evalOpCall env "range" args =
     case evalArgs env args of
-        Right ([VInt start, VInt end], env') ->
-            let nums = [start..end-1]
-            in Right (VString ("range"), env')  -- Simplified
+        Right ([VInt _, VInt _], env') ->
+            Right (VString ("range"), env')  -- Simplified
         Right (_, _) -> Left "range: expected 2 integer arguments"
         Left err -> Left err
 evalOpCall env op args =
@@ -367,12 +364,14 @@ evalOp "-" _ = Left "-: arguments must be integers"
 evalOp "div" [] = Left "div: expected at least 1 argument"
 evalOp "div" [_] = Left "div: expected at least 2 arguments"
 evalOp "div" (VInt x:xs)
-    | any (\(VInt y) -> y == 0) xs = Left "div: division by zero"
+    | any isZero xs = Left "div: division by zero"
     | otherwise = case mapM getInt xs of
         Just ns -> Right (VInt (foldl div x ns))
         Nothing -> Left "div: arguments must be integers"
+  where isZero (VInt y) = y == 0
+        isZero _ = False
 evalOp "div" _ = Left "div: arguments must be integers"
-evalOp "mod" [VInt x, VInt 0] = Left "mod: division by zero"
+evalOp "mod" [VInt _, VInt 0] = Left "mod: division by zero"
 evalOp "mod" [VInt x, VInt y] = Right (VInt (mod x y))
 evalOp "mod" _ = Left "mod: expected exactly 2 integer arguments"
 evalOp op _ = Left ("unknown procedure: " ++ op)

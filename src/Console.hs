@@ -10,7 +10,7 @@ import System.Exit (exitWith, ExitCode(ExitFailure))
 import System.IO (hPutStrLn, stderr)
 import Control.Monad.IO.Class (liftIO)
 import System.Console.Haskeline
-import AST (SExpr(..), Ast(..), Type(..), Value(..), Env,
+import AST (SExpr(..), Ast(..), Value(..), Env,
             sexprToAST, evalAST)
 import Parser (parseSExprMultipleEither)
 

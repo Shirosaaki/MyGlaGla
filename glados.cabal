@@ -5,7 +5,7 @@ cabal-version: 2.2
 -- see: https://github.com/sol/hpack
 
 name:           glados
-version:        0.2.1.0
+version:        0.3.0.0
 description:    Please see the README on GitHub at <https://github.com/githubuser/glados#readme>
 homepage:       https://github.com/githubuser/glados#readme
 bug-reports:    https://github.com/githubuser/glados/issues
@@ -26,6 +26,7 @@ source-repository head
 library
   exposed-modules:
       AST
+      Compiler
       Console
       Lib
       Parser
@@ -41,6 +42,8 @@ library
     , containers
     , haskeline
     , megaparsec
+    , mtl
+    , process
   default-language: Haskell2010
 
 executable glados
@@ -58,6 +61,8 @@ executable glados
     , glados
     , haskeline
     , megaparsec
+    , mtl
+    , process
   default-language: Haskell2010
 
 test-suite glados-test
@@ -77,4 +82,6 @@ test-suite glados-test
     , haskeline
     , hspec
     , megaparsec
+    , mtl
+    , process
   default-language: Haskell2010
