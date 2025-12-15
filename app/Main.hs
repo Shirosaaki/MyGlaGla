@@ -12,7 +12,7 @@ import System.Exit (die, exitWith, ExitCode(ExitFailure))
 import System.FilePath (takeExtension)
 import Console (runConsole, runBatch)
 import Parser (parseSExprMultipleEither)
-import AST (sexprToAST, Ast(..), evalAST)
+import AST (sexprToAST, Ast(..), evalAST, SExpr)
 import Compiler (compileToObject, compileToLL)
 import Loader (loadBytecodeFile, disassemble)
 import VM (runVM)
@@ -82,9 +82,9 @@ evalSequence env (s:ss) =
     case sexprToAST s of
         Right ast ->
             case evalAST env ast of
-                Just (result, env') -> printResult' result >>
+                Right (result, env') -> printResult' result >>
                                        evalSequence env' ss
-                Nothing -> hPutStrLn stderr "*** ERROR: Evaluation error" >>
+                Left err -> hPutStrLn stderr ("*** ERROR: " ++ err) >>
                            exitWith (ExitFailure 84)
         Left err -> hPutStrLn stderr ("*** ERROR: " ++ err) >>
                    exitWith (ExitFailure 84)
@@ -104,5 +104,4 @@ printVMResult (VM.VMBool False) = putStrLn "#f"
 printVMResult VM.VMVoid = return ()
 printVMResult (VM.VMClosure _ _ _) = putStrLn "#<procedure>"
 
-type SExpr = AST.SExpr
 type Env = [(String, Ast)]
