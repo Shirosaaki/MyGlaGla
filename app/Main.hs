@@ -6,13 +6,17 @@
 -}
 module Main (main) where
 
-import System.IO (hIsTerminalDevice, stdin)
+import System.IO (hIsTerminalDevice, stdin, hPutStrLn, stderr)
 import System.Environment (getArgs)
-import System.Exit (die)
+import System.Exit (die, exitWith, ExitCode(ExitFailure))
+import System.FilePath (takeExtension)
 import Console (runConsole, runBatch)
 import Parser (parseSExprMultipleEither)
-import AST (sexprToAST, Ast(..))
+import AST (sexprToAST, Ast(..), evalAST)
 import Compiler (compileToObject, compileToLL)
+import Loader (loadBytecodeFile, disassemble)
+import VM (runVM)
+import qualified VM
 
 main :: IO ()
 main = getArgs >>= dispatch
@@ -20,8 +24,12 @@ main = getArgs >>= dispatch
 dispatch :: [String] -> IO ()
 dispatch ["-S", llOut] = compileFromStdin (compileToLL llOut)
 dispatch ["-c", objOut] = compileFromStdin (compileToObject objOut)
+dispatch ["-d", file] = runDisassembleMode file  -- Disassemble VM bytecode
+dispatch [file] 
+    | takeExtension file == ".o" = runVMMode file  -- Execute VM bytecode
+    | otherwise = runFileMode file  -- Execute source file
 dispatch [] = runInteractive
-dispatch _ = die "Usage: glados [-S out.ll | -c out.o]"
+dispatch _ = die "Usage: glados [-S out.ll | -c out.o | -d file.o | file.o | file.scm]"
 
 runInteractive :: IO ()
 runInteractive = do
@@ -36,3 +44,65 @@ compileFromStdin compile = do
         Right sexprs -> case mapM sexprToAST sexprs of
             Left perr -> die perr
             Right asts -> compile (Block asts)
+
+-- Execute a source file
+runFileMode :: FilePath -> IO ()
+runFileMode path = do
+    input <- readFile path
+    case parseSExprMultipleEither input of
+        Right sexprs -> evalSequence [] sexprs
+        Left err -> hPutStrLn stderr ("*** ERROR: " ++ err) >>
+                    exitWith (ExitFailure 84)
+
+-- Execute bytecode from .o file
+runVMMode :: FilePath -> IO ()
+runVMMode path = do
+    result <- loadBytecodeFile path
+    case result of
+        Left err -> hPutStrLn stderr ("*** ERROR: " ++ err) >>
+                    exitWith (ExitFailure 84)
+        Right instrs -> do
+            case runVM instrs of
+                Left err -> hPutStrLn stderr ("*** RUNTIME ERROR: " ++ err) >>
+                            exitWith (ExitFailure 84)
+                Right val -> printVMResult val
+
+-- Disassemble .o file
+runDisassembleMode :: FilePath -> IO ()
+runDisassembleMode path = do
+    result <- loadBytecodeFile path
+    case result of
+        Left err -> hPutStrLn stderr ("*** ERROR: " ++ err) >>
+                    exitWith (ExitFailure 84)
+        Right instrs -> putStrLn (disassemble instrs)
+
+evalSequence :: Env -> [SExpr] -> IO ()
+evalSequence _ [] = return ()
+evalSequence env (s:ss) =
+    case sexprToAST s of
+        Right ast ->
+            case evalAST env ast of
+                Just (result, env') -> printResult' result >>
+                                       evalSequence env' ss
+                Nothing -> hPutStrLn stderr "*** ERROR: Evaluation error" >>
+                           exitWith (ExitFailure 84)
+        Left err -> hPutStrLn stderr ("*** ERROR: " ++ err) >>
+                   exitWith (ExitFailure 84)
+
+printResult' :: Ast -> IO ()
+printResult' (AstInt n) = print n
+printResult' (AstBool True) = putStrLn "#t"
+printResult' (AstBool False) = putStrLn "#f"
+printResult' AstVoid = return ()
+printResult' (AstClosure _ _ _) = putStrLn "#<procedure>"
+printResult' result = print result
+
+printVMResult :: VM.VMValue -> IO ()
+printVMResult (VM.VMInt n) = print n
+printVMResult (VM.VMBool True) = putStrLn "#t"
+printVMResult (VM.VMBool False) = putStrLn "#f"
+printVMResult VM.VMVoid = return ()
+printVMResult (VM.VMClosure _ _ _) = putStrLn "#<procedure>"
+
+type SExpr = AST.SExpr
+type Env = [(String, Ast)]

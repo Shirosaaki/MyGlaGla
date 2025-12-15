@@ -26,10 +26,13 @@ source-repository head
 library
   exposed-modules:
       AST
+      Bytecode
       Compiler
       Console
       Lib
+      Loader
       Parser
+      VM
   other-modules:
       Paths_glados
   autogen-modules:
@@ -39,7 +42,9 @@ library
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
   build-depends:
       base >=4.7 && <5
+    , bytestring
     , containers
+    , filepath
     , haskeline
     , megaparsec
     , mtl
@@ -57,7 +62,9 @@ executable glados
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
+    , bytestring
     , containers
+    , filepath
     , glados
     , haskeline
     , megaparsec
@@ -69,6 +76,7 @@ test-suite glados-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
+      Generated.FilesSpec
       Paths_glados
   autogen-modules:
       Paths_glados
@@ -77,7 +85,9 @@ test-suite glados-test
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
+    , bytestring
     , containers
+    , filepath
     , glados
     , haskeline
     , hspec
