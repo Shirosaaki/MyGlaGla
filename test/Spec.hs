@@ -7,11 +7,12 @@
 import Test.Hspec
 import Lib (SExpr(..), Ast(..), sexprToAST, evalAST,
             parseSExprMultipleEither, defName, defValue)
+import qualified Theshow.Parser as TSL
 import qualified Paths_glados as P
 import Data.Version (showVersion)
 import Data.List (isSuffixOf)
 import System.Environment (setEnv, unsetEnv)
-import Data.Either (isLeft)
+import Data.Either (isLeft, isRight)
 
 type Env = [(String, Ast)]
 
@@ -508,3 +509,293 @@ main = hspec $ do
             fp <- P.getDataFileName "file.txt"
             unsetEnv "glados_datadir"
             fp `shouldBe` "/tmp/file.txt"
+
+    -- ========================================================================
+    -- TSLang Parser Tests
+    -- ========================================================================
+
+    describe "Basic Atoms" $ do
+        it "parses positive integer" $
+            TSL.parseSExprEither "42" `shouldBe` Right (SInt 42)
+        it "parses negative integer" $
+            TSL.parseSExprEither "-42" `shouldBe` Right (SInt (-42))
+        it "parses zero" $
+            TSL.parseSExprEither "0" `shouldBe` Right (SInt 0)
+        it "parses large positive integer" $
+            TSL.parseSExprEither "1000000" `shouldBe` Right (SInt 1000000)
+        it "parses large negative integer" $
+            TSL.parseSExprEither "-1000000" `shouldBe` Right (SInt (-1000000))
+        it "parses integer with explicit positive sign" $
+            TSL.parseSExprEither "+42" `shouldBe` Right (SInt 42)
+
+        it "parses positive float" $
+            TSL.parseSExprEither "3.14" `shouldBe` Right (SList [SSymbol "float", SSymbol "3.14"])
+        it "parses negative float" $
+            TSL.parseSExprEither "-3.14" `shouldBe` Right (SList [SSymbol "float", SSymbol "-3.14"])
+        it "parses float with positive sign" $
+            TSL.parseSExprEither "+3.14" `shouldBe` Right (SList [SSymbol "float", SSymbol "+3.14"])
+
+        it "parses simple string" $
+            TSL.parseSExprEither "\"hello\"" `shouldBe` Right (SList [SSymbol "string", SSymbol "hello"])
+        it "parses empty string" $
+            TSL.parseSExprEither "\"\"" `shouldBe` Right (SList [SSymbol "string", SSymbol ""])
+        it "parses string with spaces" $
+            TSL.parseSExprEither "\"hello world\"" `shouldBe` Right (SList [SSymbol "string", SSymbol "hello world"])
+
+        it "parses simple symbol" $
+            TSL.parseSExprEither "foo" `shouldBe` Right (SSymbol "foo")
+        it "parses symbol with underscore" $
+            TSL.parseSExprEither "foo_bar" `shouldBe` Right (SSymbol "foo_bar")
+        it "parses symbol with numbers" $
+            TSL.parseSExprEither "var1" `shouldBe` Right (SSymbol "var1")
+        it "parses symbol starting with uppercase" $
+            TSL.parseSExprEither "Personne" `shouldBe` Right (SSymbol "Personne")
+
+    describe "Expressions" $ do
+        -- Supported arithmetic operators (* and /)
+        it "parses multiplication" $
+            TSL.parseSExprEither "2 * 3" `shouldBe` Right (SList [SSymbol "*", SInt 2, SInt 3])
+        it "parses division" $
+            TSL.parseSExprEither "10 / 2" `shouldBe` Right (SList [SSymbol "/", SInt 10, SInt 2])
+        it "parses chained multiplication" $
+            TSL.parseSExprEither "2 * 3 * 4" `shouldBe`
+                Right (SList [SSymbol "*", SList [SSymbol "*", SInt 2, SInt 3], SInt 4])
+        it "parses chained division" $
+            TSL.parseSExprEither "24 / 4 / 2" `shouldBe`
+                Right (SList [SSymbol "/", SList [SSymbol "/", SInt 24, SInt 4], SInt 2])
+        it "parses mixed mul and div" $
+            TSL.parseSExprEither "2 * 6 / 3" `shouldBe`
+                Right (SList [SSymbol "/", SList [SSymbol "*", SInt 2, SInt 6], SInt 3])
+
+    describe "Variable Definitions (eric)" $ do
+        it "parses variable definition without value" $
+            TSL.parseSExprEither "eric x -> int" `shouldBe`
+                Right (SList [SSymbol "define", SSymbol "x", SSymbol "int"])
+        it "parses variable definition with string type" $
+            TSL.parseSExprEither "eric name -> string" `shouldBe`
+                Right (SList [SSymbol "define", SSymbol "name", SSymbol "string"])
+        it "parses variable definition with float type" $
+            TSL.parseSExprEither "eric pi -> float" `shouldBe`
+                Right (SList [SSymbol "define", SSymbol "pi", SSymbol "float"])
+        it "parses variable definition with custom type" $
+            TSL.parseSExprEither "eric p -> Personne" `shouldBe`
+                Right (SList [SSymbol "define", SSymbol "p", SSymbol "Personne"])
+
+    describe "Assignments" $ do
+        it "parses simple assignment" $
+            TSL.parseSExprEither "x = 5" `shouldBe`
+                Right (SList [SSymbol "assign", SSymbol "x", SInt 5])
+        it "parses assignment with mul expression" $
+            TSL.parseSExprEither "x = y * 2" `shouldBe`
+                Right (SList [SSymbol "assign", SSymbol "x",
+                       SList [SSymbol "*", SSymbol "y", SInt 2]])
+        it "parses array element assignment" $
+            TSL.parseSExprEither "arr[0] = 10" `shouldBe`
+                Right (SList [SSymbol "assign",
+                       SList [SSymbol "array-access", SSymbol "arr", SInt 0],
+                       SInt 10])
+        it "parses member assignment" $
+            TSL.parseSExprEither "p.name = \"Alice\"" `shouldBe`
+                Right (SList [SSymbol "assign",
+                       SList [SSymbol "member-access", SSymbol "p", SSymbol "name"],
+                       SList [SSymbol "string", SSymbol "Alice"]])
+
+    describe "Array Access" $ do
+        it "parses simple array access" $
+            TSL.parseSExprEither "arr[0]" `shouldBe`
+                Right (SList [SSymbol "array-access", SSymbol "arr", SInt 0])
+        it "parses array access with variable index" $
+            TSL.parseSExprEither "arr[i]" `shouldBe`
+                Right (SList [SSymbol "array-access", SSymbol "arr", SSymbol "i"])
+        it "parses nested array access" $
+            TSL.parseSExprEither "arr[0][1]" `shouldBe`
+                Right (SList [SSymbol "array-access",
+                       SList [SSymbol "array-access", SSymbol "arr", SInt 0],
+                       SInt 1])
+
+    describe "Member Access" $ do
+        it "parses simple member access" $
+            TSL.parseSExprEither "p.name" `shouldBe`
+                Right (SList [SSymbol "member-access", SSymbol "p", SSymbol "name"])
+        it "parses chained member access" $
+            TSL.parseSExprEither "a.b.c" `shouldBe`
+                Right (SList [SSymbol "member-access",
+                       SList [SSymbol "member-access", SSymbol "a", SSymbol "b"],
+                       SSymbol "c"])
+        it "parses array access on member" $
+            TSL.parseSExprEither "p.items[0]" `shouldBe`
+                Right (SList [SSymbol "array-access",
+                       SList [SSymbol "member-access", SSymbol "p", SSymbol "items"],
+                       SInt 0])
+
+    describe "Pointers" $ do
+        it "parses address-of operator" $
+            TSL.parseSExprEither "&x" `shouldBe`
+                Right (SList [SSymbol "addr-of", SSymbol "x"])
+        it "parses dereference operator" $
+            TSL.parseSExprEither "*ptr" `shouldBe`
+                Right (SList [SSymbol "deref", SSymbol "ptr"])
+
+    describe "Type Annotations" $ do
+        it "parses simple type" $
+            TSL.parseSExprEither "eric x -> int" `shouldSatisfy` isRight
+        it "parses array type" $
+            TSL.parseSExprEither "eric arr -> int[]" `shouldBe`
+                Right (SList [SSymbol "define", SSymbol "arr",
+                       SList [SSymbol "array-type", SSymbol "int"]])
+        it "parses pointer type" $
+            TSL.parseSExprEither "eric ptr -> int*" `shouldBe`
+                Right (SList [SSymbol "define", SSymbol "ptr",
+                       SList [SSymbol "pointer-type", SSymbol "int"]])
+        it "parses custom type (struct)" $
+            TSL.parseSExprEither "eric p -> Personne" `shouldBe`
+                Right (SList [SSymbol "define", SSymbol "p", SSymbol "Personne"])
+
+    describe "If Statements (erif)" $ do
+        it "parses simple if statement with mul" $
+            TSL.parseSExprEither "erif (x * 2):" `shouldSatisfy` isRight
+        it "parses if with assignment body" $
+            TSL.parseSExprEither "erif (x):\n    y = 1" `shouldSatisfy` isRight
+        it "parses if with variable condition" $
+            TSL.parseSExprEither "erif (flag):" `shouldSatisfy` isRight
+
+    describe "While Loops (darius)" $ do
+        it "parses simple while loop" $
+            TSL.parseSExprEither "darius (x):" `shouldSatisfy` isRight
+        it "parses while with mul condition" $
+            TSL.parseSExprEither "darius (x * 2):" `shouldSatisfy` isRight
+
+    describe "For Loops (aer)" $ do
+        it "parses simple for loop" $
+            TSL.parseSExprEither "aer i in range(0, 10):" `shouldSatisfy` isRight
+        it "parses for loop with print body" $
+            TSL.parseSExprEither "aer i in range(0, 5):\n    peric(\"test\")" `shouldSatisfy` isRight
+        it "parses for loop with variable bounds" $
+            TSL.parseSExprEither "aer i in range(start, end):" `shouldSatisfy` isRight
+
+    describe "Function Definitions (Deschodt)" $ do
+        it "parses function with no parameters" $
+            TSL.parseSExprEither "Deschodt main() -> int" `shouldSatisfy` isRight
+        it "parses function named Eric (main function)" $
+            TSL.parseSExprEither "Deschodt Eric() -> int" `shouldSatisfy` isRight
+        it "parses function with parameters" $
+            TSL.parseSExprEither "Deschodt add(a -> int, b -> int) -> int" `shouldSatisfy` isRight
+        it "parses function with void return type" $
+            TSL.parseSExprEither "Deschodt print_hello() -> void" `shouldSatisfy` isRight
+        it "parses function with pointer parameter" $
+            TSL.parseSExprEither "Deschodt modify(ptr -> int*) -> void" `shouldSatisfy` isRight
+
+    describe "Function Calls" $ do
+        it "parses function call with no arguments" $
+            TSL.parseSExprEither "main()" `shouldBe`
+                Right (SList [SSymbol "call", SSymbol "main"])
+        it "parses function call with one argument" $
+            TSL.parseSExprEither "print(42)" `shouldBe`
+                Right (SList [SSymbol "call", SSymbol "print", SInt 42])
+        it "parses function call with multiple arguments" $
+            TSL.parseSExprEither "add(1, 2)" `shouldBe`
+                Right (SList [SSymbol "call", SSymbol "add", SInt 1, SInt 2])
+        it "parses function call with variable arguments" $
+            TSL.parseSExprEither "compute(x, y)" `shouldBe`
+                Right (SList [SSymbol "call", SSymbol "compute", SSymbol "x", SSymbol "y"])
+        it "parses function call with address-of argument" $
+            TSL.parseSExprEither "modify(&x)" `shouldBe`
+                Right (SList [SSymbol "call", SSymbol "modify",
+                       SList [SSymbol "addr-of", SSymbol "x"]])
+
+    describe "Return Statements (deschodt)" $ do
+        it "parses return with integer" $
+            TSL.parseSExprEither "deschodt 0" `shouldBe`
+                Right (SList [SSymbol "return", SInt 0])
+        it "parses return with mul expression" $
+            TSL.parseSExprEither "deschodt x * y" `shouldBe`
+                Right (SList [SSymbol "return", SList [SSymbol "*", SSymbol "x", SSymbol "y"]])
+        it "parses return with variable" $
+            TSL.parseSExprEither "deschodt result" `shouldBe`
+                Right (SList [SSymbol "return", SSymbol "result"])
+
+    describe "Print Statements (peric)" $ do
+        it "parses simple print" $
+            TSL.parseSExprEither "peric(\"Hello\")" `shouldBe`
+                Right (SList [SSymbol "print", SList [SSymbol "string", SSymbol "Hello"]])
+        it "parses print with interpolation syntax" $
+            TSL.parseSExprEither "peric(\"x = {x}\")" `shouldBe`
+                Right (SList [SSymbol "print", SList [SSymbol "string", SSymbol "x = {x}"]])
+        it "parses print with empty string" $
+            TSL.parseSExprEither "peric(\"\")" `shouldBe`
+                Right (SList [SSymbol "print", SList [SSymbol "string", SSymbol ""]])
+
+    describe "Structs (destruct)" $ do
+        it "parses simple struct" $
+            TSL.parseSExprEither "destruct Personne:" `shouldBe`
+                Right (SList [SSymbol "struct", SSymbol "Personne"])
+        it "parses struct with one field" $
+            TSL.parseSExprEither "destruct Point:\n    x -> int" `shouldBe`
+                Right (SList [SSymbol "struct", SSymbol "Point",
+                       SList [SSymbol "x", SSymbol "int"]])
+        it "parses struct with multiple fields" $
+            TSL.parseSExprEither "destruct Personne:\n    nom -> string\n    age -> int" `shouldBe`
+                Right (SList [SSymbol "struct", SSymbol "Personne",
+                       SList [SSymbol "nom", SSymbol "string"],
+                       SList [SSymbol "age", SSymbol "int"]])
+
+    describe "Enums (desnum)" $ do
+        it "parses simple enum" $
+            TSL.parseSExprEither "desnum Color:" `shouldBe`
+                Right (SList [SSymbol "enum", SSymbol "Color"])
+        it "parses enum with values" $
+            TSL.parseSExprEither "desnum Jour:\n    Lundi\n    Mardi\n    Mercredi" `shouldBe`
+                Right (SList [SSymbol "enum", SSymbol "Jour",
+                       SSymbol "Lundi", SSymbol "Mardi", SSymbol "Mercredi"])
+
+    describe "Comments (desnote)" $ do
+        it "parses line comment syntax" $
+            TSL.parseSExprEither "desnote this is a comment" `shouldSatisfy` isLeft
+        it "parses code with comment at end" $
+            TSL.parseSExprEither "42" `shouldBe` Right (SInt 42)
+
+    describe "Multiple Statements" $ do
+        it "parses multiple variable declarations" $
+            TSL.parseSExprMultipleEither "eric x -> int\neric y -> int" `shouldSatisfy` isRight
+        it "parses function with print body" $
+            TSL.parseSExprMultipleEither "Deschodt Eric() -> int\n    peric(\"test\")\n    deschodt 0" `shouldSatisfy` isRight
+
+    describe "Complex Programs" $ do
+        it "parses hello world program" $
+            TSL.parseSExprMultipleEither "Deschodt Eric() -> int\n    peric(\"Salut, monde !\")\n    deschodt 0" `shouldSatisfy` isRight
+        it "parses simple variable declaration" $
+            TSL.parseSExprMultipleEither "Deschodt Eric() -> int\n    eric x -> int\n    deschodt 0" `shouldSatisfy` isRight
+        it "parses struct definition and usage" $
+            TSL.parseSExprMultipleEither "destruct Personne:\n    nom -> string\n    age -> int" `shouldSatisfy` isRight
+        it "parses enum definition" $
+            TSL.parseSExprMultipleEither "desnum Jour:\n    Lundi\n    Mardi" `shouldSatisfy` isRight
+        it "parses for loop with body" $
+            TSL.parseSExprMultipleEither "aer i in range(0, 5):\n    peric(\"i\")" `shouldSatisfy` isRight
+        it "parses while loop with variable" $
+            TSL.parseSExprMultipleEither "darius (x):\n    peric(\"loop\")" `shouldSatisfy` isRight
+        it "parses function with return" $
+            TSL.parseSExprMultipleEither "Deschodt add(a -> int, b -> int) -> int\n    deschodt a" `shouldSatisfy` isRight
+
+    describe "Edge Cases" $ do
+        it "handles leading whitespace" $
+            TSL.parseSExprEither "42" `shouldBe` Right (SInt 42)
+        it "handles tabs" $
+            TSL.parseSExprEither "\t42" `shouldBe` Right (SInt 42)
+        it "parses deeply nested expressions" $
+            TSL.parseSExprEither "((((1))))" `shouldSatisfy` isRight
+        it "parses complex member chain with array" $
+            TSL.parseSExprEither "obj.items[0].value" `shouldSatisfy` isRight
+        it "parses parenthesized integer" $
+            TSL.parseSExprEither "(42)" `shouldBe` Right (SInt 42)
+
+    describe "Error Cases" $ do
+        it "fails on unclosed parenthesis" $
+            TSL.parseSExprEither "(1 + 2" `shouldSatisfy` isLeft
+        it "fails on unclosed string" $
+            TSL.parseSExprEither "\"hello" `shouldSatisfy` isLeft
+        it "fails on invalid character" $
+            TSL.parseSExprEither "@invalid" `shouldSatisfy` isLeft
+        it "fails on empty input" $
+            TSL.parseSExprEither "" `shouldSatisfy` isLeft
+        it "fails on unclosed array access" $
+            TSL.parseSExprEither "arr[0" `shouldSatisfy` isLeft

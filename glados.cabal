@@ -1,6 +1,6 @@
 cabal-version: 2.2
 
--- This file has been generated from package.yaml by hpack version 0.38.1.
+-- This file has been generated from package.yaml by hpack version 0.38.0.
 --
 -- see: https://github.com/sol/hpack
 
@@ -32,6 +32,7 @@ library
       Lib
       Loader
       Parser
+      Theshow.Parser
       VM
   other-modules:
       Paths_glados
@@ -76,7 +77,6 @@ test-suite glados-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
-      Generated.FilesSpec
       Paths_glados
   autogen-modules:
       Paths_glados

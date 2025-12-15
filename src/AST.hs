@@ -14,7 +14,7 @@ data SExpr = SInt Int
             | SChar Char
             | SSymbol String
             | SList [SExpr]
-            deriving Show
+            deriving (Show, Eq)
 
 -- | Type system for the language
 data Type = TInt
