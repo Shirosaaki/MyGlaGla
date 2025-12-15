@@ -62,10 +62,18 @@ stringAtom = do
   return (SString chars)
 
 negativeInt :: Parser Int
-negativeInt = char '-' >> some digitChar >>= \d -> return (-(read d))
+negativeInt = do
+  _ <- char '-'
+  _ <- lookAhead digitChar  -- Vérifie qu'il y a un chiffre après
+  digits <- some digitChar
+  return (-(read digits))
 
 positiveInt :: Parser Int
-positiveInt = char '+' >> some digitChar >>= \d -> return (read d)
+positiveInt = do
+  _ <- char '+'
+  _ <- lookAhead digitChar  -- Vérifie qu'il y a un chiffre après
+  digits <- some digitChar
+  return (read digits)
 
 unsignedInt :: Parser Int
 unsignedInt = read <$> some digitChar
