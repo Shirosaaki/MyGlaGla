@@ -11,15 +11,20 @@ import System.Environment (getArgs)
 import System.Exit (die, exitWith, ExitCode(ExitFailure))
 import System.FilePath (takeExtension)
 import Console (runConsole, runBatch)
-import Parser (parseSExprMultipleEither)
+import Parser (parseSExprMultipleEither, setUseLisp)
 import AST (sexprToAST, Ast(..), evalAST, SExpr)
 import Compiler (compileToObject, compileToLL)
 import Loader (loadBytecodeFile, disassemble)
 import VM (runVM)
 import qualified VM
+import Control.Monad (when)
 
 main :: IO ()
-main = getArgs >>= dispatch
+main = getArgs >>= \rawArgs -> do
+    let useLisp = "-l" `elem` rawArgs
+        args = filter (/= "-l") rawArgs
+    when useLisp (setUseLisp True)
+    dispatch args
 
 dispatch :: [String] -> IO ()
 dispatch ["-S", llOut] = compileFromStdin (compileToLL llOut)
@@ -29,7 +34,7 @@ dispatch [file]
     | takeExtension file == ".o" = runVMMode file  -- Execute VM bytecode
     | otherwise = runFileMode file  -- Execute source file
 dispatch [] = runInteractive
-dispatch _ = die "Usage: glados [-S out.ll | -c out.o | -d file.o | file.o | file.scm]"
+dispatch _ = die "Usage: glados [-l] [-S out.ll | -c out.o | -d file.o | file.o | file.scm]"
 
 runInteractive :: IO ()
 runInteractive = do

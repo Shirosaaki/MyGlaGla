@@ -5,7 +5,7 @@ cabal-version: 2.2
 -- see: https://github.com/sol/hpack
 
 name:           glados
-version:        0.3.1.0
+version:        0.3.2.0
 description:    Please see the README on GitHub at <https://github.com/githubuser/glados#readme>
 homepage:       https://github.com/githubuser/glados#readme
 bug-reports:    https://github.com/githubuser/glados/issues
@@ -30,6 +30,7 @@ library
       Compiler
       Console
       Lib
+      Lisp.Parser
       Loader
       Parser
       Theshow.Parser

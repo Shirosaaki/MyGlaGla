@@ -64,7 +64,7 @@ spaceConsumer = L.space
   empty
 
 lineComment :: Parser ()
-lineComment = L.skipLineComment "desnote"
+lineComment = try (L.skipLineComment "desnote") <|> L.skipLineComment ";"
 
 -- ============================================================================
 -- Basic Atoms
@@ -177,7 +177,7 @@ parseExpr = parseComparison
 parseComparison :: Parser SExpr
 parseComparison = do
   left <- parseAddSub
-  rest <- optional $ do
+  rest <- optional (try $ do
     spaceConsumer
     op <- choice
       [ try (string "<=") >> return "<="
@@ -189,7 +189,7 @@ parseComparison = do
       ]
     spaceConsumer
     right <- parseAddSub
-    return (op, right)
+    return (op, right))
   case rest of
     Nothing -> return left
     Just (op, right) -> return $ SList [SSymbol op, left, right]
@@ -201,12 +201,12 @@ parseAddSub = do
 
 parseAddSubRest :: SExpr -> Parser SExpr
 parseAddSubRest left = do
-  rest <- optional $ do
+  rest <- optional (try $ do
     spaceConsumer
     op <- (char '+' >> return "+") <|> (char '-' >> return "-")
     spaceConsumer
     right <- parseMulDiv
-    return (op, right)
+    return (op, right))
   case rest of
     Nothing -> return left
     Just (op, right) -> parseAddSubRest $ SList [SSymbol op, left, right]
@@ -218,12 +218,12 @@ parseMulDiv = do
 
 parseMulDivRest :: SExpr -> Parser SExpr
 parseMulDivRest left = do
-  rest <- optional $ do
+  rest <- optional (try $ do
     spaceConsumer
     op <- (char '*' >> return "*") <|> (char '/' >> return "/")
     spaceConsumer
     right <- parseUnary
-    return (op, right)
+    return (op, right))
   case rest of
     Nothing -> return left
     Just (op, right) -> parseMulDivRest $ SList [SSymbol op, left, right]
