@@ -189,6 +189,19 @@ sexprToAST (SList [SSymbol "call", SSymbol name, SList args]) =
         Right argAsts -> Right (Call (AstSymbol name) argAsts)
         Left err -> Left err
 
+-- define: (define name value?) emitted by parser for `eric` and some constructs
+sexprToAST (SList [SSymbol "define", SSymbol name, val, _]) =
+    case sexprToAST val of
+        Right v -> Right (Define name Nothing v)
+        Left e -> Left e
+sexprToAST (SList [SSymbol "define", SSymbol name, _]) = Right (Define name Nothing AstVoid)
+
+-- assign: (assign name value)
+sexprToAST (SList [SSymbol "assign", SSymbol name, value]) =
+    case sexprToAST value of
+        Right v -> Right (Assign name v)
+        Left e -> Left e
+
 -- string interpolation form: (string-interp (parts...)) -> represent as a call
 sexprToAST (SList [SSymbol "string-interp", SList parts]) =
     case mapM sexprToAST parts of

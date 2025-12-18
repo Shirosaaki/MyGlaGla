@@ -362,13 +362,11 @@ parseIf = do
   spaceConsumer
   _ <- char ')'
   _ <- char ':'
-  spaceConsumer
   thenBranch <- parseBlock
   elseBranch <- optional $ do
-    spaceConsumer
+    
     _ <- string "deschelse"
     _ <- char ':'
-    spaceConsumer
     parseBlock
   return $ SList [SSymbol "if", cond, SList thenBranch,
                   SList (fromMaybe [] elseBranch)]
@@ -384,7 +382,6 @@ parseWhile = do
   spaceConsumer
   _ <- char ')'
   _ <- char ':'
-  spaceConsumer
   body <- parseBlock
   return $ SList [SSymbol "while", cond, SList body]
 
@@ -407,7 +404,6 @@ parseFor = do
   spaceConsumer
   _ <- char ')'
   _ <- char ':'
-  spaceConsumer
   body <- parseBlock
   return $ SList [SSymbol "for", SSymbol var, start, end, SList body]
 
@@ -501,8 +497,30 @@ parseFuncCall = do
   _ <- char ')'
   return $ SList ([SSymbol "call", SSymbol name, SList args])
 
--- | Parse a block of statements (indentation-based)
+-- parseBlockMin takes a minimum indent (number of spaces/tabs). The first
+-- statement in the block must be indented strictly more than `minIndent`.
+-- All subsequent statements in the same block must have the same indentation
+-- as the first statement. Nested blocks (handled by nested calls) must be
+-- indented further.
+parseBlockMin :: Int -> Parser [SExpr]
+parseBlockMin minIndent = do
+  _ <- char '\n'
+  -- count indentation of first statement
+  indents <- some (char ' ' <|> char '\t')
+  let indentCount = length indents
+  if indentCount <= minIndent
+    then fail "insufficient indentation for block"
+    else do
+      first <- parseStmt
+      _ <- many (char '\n')
+      rest <- many $ try $ do
+        -- require same indentation for other statements in this block
+        _ <- count indentCount (char ' ' <|> char '\t')
+        s <- parseStmt
+        _ <- many (char '\n')
+        return s
+      return (first : rest)
+
+-- Convenience wrapper for existing callers when no minimum indent is known
 parseBlock :: Parser [SExpr]
-parseBlock = many $ try $ do
-  spaceConsumer
-  parseStmt
+parseBlock = parseBlockMin 0
