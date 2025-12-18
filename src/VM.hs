@@ -15,6 +15,7 @@ import qualified Bytecode as BC
 data VMValue
     = VMInt Int32
     | VMBool Bool
+    | VMString String
     | VMClosure Int32 Int32 [VMValue]
     | VMVoid
     deriving (Show, Eq)
@@ -27,6 +28,7 @@ data VMState = VMState
     , locals :: [VMValue]
     , program :: [Instruction]
     , halted :: Bool
+    , outputs :: [String]
     } deriving (Show)
 
 data CallFrame = CallFrame
@@ -43,22 +45,24 @@ initVM instrs = VMState
     , locals = []
     , program = instrs
     , halted = False
+    , outputs = []
     }
 
-runVM :: [Instruction] -> Either String VMValue
+runVM :: [Instruction] -> (Either String VMValue, [String])
 runVM instrs = execBytecode (initVM instrs)
 
-execBytecode :: VMState -> Either String VMValue
+execBytecode :: VMState -> (Either String VMValue, [String])
 execBytecode state
     | halted state = 
+        let out = outputs state in
         case stack state of
-            (v:_) -> Right v
-            [] -> Right VMVoid
-    | pc state >= length (program state) = Left "PC out of bounds"
+            (v:_) -> (Right v, out)
+            [] -> (Right VMVoid, out)
+    | pc state >= length (program state) = (Left "PC out of bounds", outputs state)
     | otherwise = 
         let instr = program state !! pc state
         in case step state instr of
-            Left err -> Left err
+            Left err -> (Left err, outputs state)
             Right newState -> execBytecode newState
 
 step :: VMState -> Instruction -> Either String VMState
@@ -219,6 +223,7 @@ step state (STORE_GLOBAL name) =
                 , pc = pc state + 1
                 }
         [] -> Left "Stack underflow on STORE_GLOBAL"
+        
 
 step state (MAKE_CLOSURE addr nparams) =
     let closure = VMClosure addr nparams (locals state)
@@ -229,3 +234,13 @@ step state (MAKE_CLOSURE addr nparams) =
 
 step state HALT =
     Right state { halted = True }
+
+step state (LOAD_CONST s) =
+    Right state { stack = VMString s : stack state, pc = pc state + 1 }
+
+step state PRINT =
+    case stack state of
+        (VMString s : rest) -> Right state { stack = rest, pc = pc state + 1, outputs = outputs state ++ [s] }
+        (VMInt n : rest) -> Right state { stack = rest, pc = pc state + 1, outputs = outputs state ++ [show n] }
+        (VMBool b : rest) -> Right state { stack = rest, pc = pc state + 1, outputs = outputs state ++ [if b then "#t" else "#f"] }
+        _ -> Left "Stack underflow or unsupported type for PRINT"

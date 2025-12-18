@@ -1,308 +1,258 @@
 {-
--- EPITECH PROJECT, 2025
--- Compiler module
--- File description:
--- Generates LLVM IR and optionally .o from AST
+-- ==============================================
+--                 Compiler.hs
+--  main
+--  Author: shirosaaki
+--  Date: 2025-12-18
+-- =============================================
 -}
-module Compiler (compileModuleLLVM, compileToObject, compileToLL) where
+module Compiler (compileModuleLLVM, compileToLL, compileToObject) where
 
-import System.Process (createProcess, proc, std_in, StdStream(..), waitForProcess)
+import AST (SExpr(..), Ast(..))
+import Bytecode (Instruction(..))
+import qualified Bytecode as BC
+import Loader (saveBytecodeFile)
+import Data.Int (Int32)
+import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
+import Data.List (partition)
+import System.Process (createProcess, proc, std_in, waitForProcess, callCommand, StdStream(CreatePipe))
 import System.IO (hPutStr, hClose)
-import AST (Ast(..))
-import qualified Data.Map as Map
-import Control.Monad.State
+-- avoid System.Directory dependency; use shell rm via callCommand instead
+import Data.Char (toLower, toUpper)
 
--- Compiler state: variable environment, temp counter, generated code lines
-data CompState = CompState
-    { varEnv   :: Map.Map String String   -- var name -> LLVM register
-    , tmpCount :: Int
-    , codeLines :: [String]
-    , funcs    :: [String]                -- generated function definitions
-    }
+-- Entry point: compile a TheShowLang AST (as SExpr) to LLVM IR
+compileModuleLLVM :: SExpr -> String
+compileModuleLLVM ast = unlines $ [llvmHeader] ++ genFuncs ast ++ [genMain ast] ++ [llvmFooter]
 
-type Compiler a = State CompState a
+-- Generate LLVM for all top-level functions and global strings
+genFuncs :: SExpr -> [String]
+genFuncs ast = genStrGlobals ast ++ genFuncs' ast
 
-freshTmp :: Compiler String
-freshTmp = do
-    s <- get
-    let n = tmpCount s
-    put s { tmpCount = n + 1 }
-    return ("%" ++ show n)
+genFuncs' :: SExpr -> [String]
+genFuncs' (SList xs) = concatMap genFunc xs
+genFuncs' _ = []
 
-emit :: String -> Compiler ()
-emit line = modify (\s -> s { codeLines = codeLines s ++ [line] })
+-- Collect string constants used by `peric` calls
+genStrGlobals :: SExpr -> [String]
+genStrGlobals (SList xs) = concatMap genStrGlobals xs ++ concatMap extractStr xs
+genStrGlobals _ = []
 
-lookupVar :: String -> Compiler String
-lookupVar name = do
-    env <- gets varEnv
-    case Map.lookup name env of
-        Just reg -> return reg
-        Nothing -> error ("Undefined variable: " ++ name)
+extractStr :: SExpr -> [String]
+extractStr (SList [SSymbol "call", SSymbol "peric", SList [SString s]]) =
+        ["@.str_" ++ show (abs (hash s)) ++ " = private constant [" ++ show (length s + 1) ++ " x i8] c\"" ++ escapeString s ++ "\\00\""]
+extractStr _ = []
 
-bindVar :: String -> String -> Compiler ()
-bindVar name reg = modify (\s -> s { varEnv = Map.insert name reg (varEnv s) })
-
--- Compile entire program
-compileModuleLLVM :: Ast -> String
-compileModuleLLVM ast = unlines (moduleHeader ++ [funcDefs, mainFn])
-  where
-    (resultReg, finalState) = runState (compileAst ast) initState
-    initState = CompState Map.empty 0 [] []
-    funcDefs = unlines (funcs finalState)
-    mainFn = buildMainFn (codeLines finalState) resultReg
-
-moduleHeader :: [String]
-moduleHeader =
-    [ "; ModuleID = 'glados'"
-    , "source_filename = \"glados\""
-    , "target triple = \"x86_64-pc-linux-gnu\""
-    , "", "declare i32 @printf(i8*, ...)"
-    , "declare i32 @puts(i8*)", ""
-    , "@.fmt_int = private constant [4 x i8] c\"%d\\0A\\00\""
-    , "" ]
-
-buildMainFn :: [String] -> String -> String
-buildMainFn bodyLines resReg = unlines $
-    ["define i32 @main() {", "entry:"] ++ bodyLines ++
-    ["  ret i32 " ++ resReg, "}"]
-
--- Compile AST node, returns register holding result
-compileAst :: Ast -> Compiler String
-
--- Integer literal
-compileAst (AstInt n) = do
-    tmp <- freshTmp
-    emit ("  " ++ tmp ++ " = add i32 0, " ++ show n)
-    return tmp
-
--- Boolean literal (1 = true, 0 = false)
-compileAst (AstBool b) = do
-    tmp <- freshTmp
-    emit ("  " ++ tmp ++ " = add i32 0, " ++ if b then "1" else "0")
-    return tmp
-
--- Variable reference
-compileAst (AstSymbol name) = lookupVar name
-
--- Block / sequence
-compileAst (Block []) = do
-    tmp <- freshTmp
-    emit ("  " ++ tmp ++ " = add i32 0, 0")
-    return tmp
-compileAst (Block [x]) = compileAst x
-compileAst (Block (x:xs)) = do
-    _ <- compileAst x
-    compileAst (Block xs)
-
-compileAst (AstList xs) = compileAst (Block xs)
-
--- Define: bind variable to value
-compileAst (Define name _ val) = do
-    reg <- compileAst val
-    bindVar name reg
-    tmp <- freshTmp
-    emit ("  " ++ tmp ++ " = add i32 0, 0")  -- define returns void/0
-    return tmp
-
--- If-then-else
-compileAst (IfElse cond thenE elseE) = compileIfElse cond thenE elseE
-
--- Function calls
-compileAst (Call (AstSymbol op) args) = compileCall op args
-compileAst (Call fn args) = do
-    _ <- compileAst fn
-    _ <- mapM compileAst args
-    tmp <- freshTmp
-    emit ("  " ++ tmp ++ " = add i32 0, 0  ; complex call")
-    return tmp
-
--- Lambda placeholder
-compileAst (AstLambda _ _) = do
-    tmp <- freshTmp
-    emit ("  " ++ tmp ++ " = add i32 0, 0  ; lambda placeholder")
-    return tmp
-
-compileAst other = error ("Unsupported codegen node: " ++ show other)
-
--- If-else helpers
-compileIfElse :: Ast -> Ast -> Ast -> Compiler String
-compileIfElse cond thenE elseE = do
-    condReg <- compileAst cond
-    labels <- makeIfLabels
-    emitCondBranch condReg labels
-    (thenReg, thenEnd) <- compileBranch (thenL labels) thenE (endL labels)
-    (elseReg, elseEnd) <- compileBranch (elseL labels) elseE (endL labels)
-    emitPhiMerge (endL labels) thenReg thenEnd elseReg elseEnd
-
-data IfLabels = IfLabels { thenL, elseL, endL :: String }
-
-makeIfLabels :: Compiler IfLabels
-makeIfLabels = IfLabels <$> freshLabel "then"
-                        <*> freshLabel "else"
-                        <*> freshLabel "endif"
-
-emitCondBranch :: String -> IfLabels -> Compiler ()
-emitCondBranch condReg labels = do
-    cmpTmp <- freshTmp
-    emit ("  " ++ cmpTmp ++ " = icmp ne i32 " ++ condReg ++ ", 0")
-    emit ("  br i1 " ++ cmpTmp ++ brTargets labels)
-  where brTargets l = ", label %" ++ thenL l ++ ", label %" ++ elseL l
-
-compileBranch :: String -> Ast -> String -> Compiler (String, String)
-compileBranch label body endLbl = do
-    emit (label ++ ":")
-    reg <- compileAst body
-    emit ("  br label %" ++ endLbl)
-    endLabel <- getCurrentLabel
-    return (reg, endLabel)
-
-emitPhiMerge :: String -> String -> String -> String -> String -> Compiler String
-emitPhiMerge endLbl thenR thenEnd elseR elseEnd = do
-    emit (endLbl ++ ":")
-    resultTmp <- freshTmp
-    emit ("  " ++ resultTmp ++ " = phi i32 " ++ phiArgs)
-    return resultTmp
-  where phiArgs = "[" ++ thenR ++ ", %" ++ thenEnd ++ "], " ++
-                  "[" ++ elseR ++ ", %" ++ elseEnd ++ "]"
-
--- Helper for labels
-freshLabel :: String -> Compiler String
-freshLabel prefix = do
-    s <- get
-    let n = tmpCount s
-    put s { tmpCount = n + 1 }
-    return (prefix ++ show n)
-
-getCurrentLabel :: Compiler String
-getCurrentLabel = do
-        code <- gets codeLines
-        let labels = [takeWhile (/= ':') l | l <- code, isLabel l]
-        return (if null labels then "entry" else last labels)
+escapeString :: String -> String
+escapeString = concatMap escapeChar
     where
-        isLabel l = case l of
-            (c:_) -> c /= ' ' && ':' `elem` l
-            _ -> False
+        escapeChar '\\' = "\\5C"
+        escapeChar '"'  = "\\22"
+        escapeChar '\n' = "\\0A"
+        escapeChar c    = [c]
 
--- Compile built-in operations
-compileCall :: String -> [Ast] -> Compiler String
+llvmHeader :: String
+llvmHeader = unlines
+    [ "; ModuleID = 'theshowlang'"
+    , "source_filename = \"theshowlang\""
+    , "target triple = \"x86_64-pc-linux-gnu\""
+    , "declare i32 @printf(i8*, ...)"
+    , "declare i32 @puts(i8*)"
+    , "@.fmt_int = private constant [4 x i8] c\"%d\\0A\\00\""
+    ]
 
--- Arithmetic
-compileCall "+" args = do
-    regs <- mapM compileAst args
-    foldBinOp "add" "0" regs
+-- Helper: hash a string for unique global name
+hash :: String -> Int
+hash = foldr ((+) . fromEnum) 0
 
-compileCall "-" [a] = do
-    aReg <- compileAst a
-    tmp <- freshTmp
-    emit ("  " ++ tmp ++ " = sub i32 0, " ++ aReg)
-    return tmp
-compileCall "-" (a:rest) = do
-    aReg <- compileAst a
-    restRegs <- mapM compileAst rest
-    foldBinOpWith "sub" aReg restRegs
-compileCall "-" [] = do
-    tmp <- freshTmp
-    emit ("  " ++ tmp ++ " = add i32 0, 0")
-    return tmp
+-- Simple function stub generator (placeholder)
+genFunc :: SExpr -> [String]
+genFunc (SList (SSymbol "define" : _)) = ["; function stub (not yet implemented)"]
+genFunc _ = []
 
-compileCall "*" args = do
-    regs <- mapM compileAst args
-    foldBinOp "mul" "1" regs
+-- Minimal main implementation so the LLVM module is valid
+genMain :: SExpr -> String
+genMain _ = unlines
+    [ "define i32 @main() {"
+    , "  ret i32 0"
+    , "}"
+    ]
 
-compileCall "div" [a, b] = do
-    aReg <- compileAst a
-    bReg <- compileAst b
-    tmp <- freshTmp
-    emit ("  " ++ tmp ++ " = sdiv i32 " ++ aReg ++ ", " ++ bReg)
-    return tmp
-compileCall "div" _ = error "div requires exactly 2 arguments"
+llvmFooter :: String
+llvmFooter = ""
 
-compileCall "mod" [a, b] = do
-    aReg <- compileAst a
-    bReg <- compileAst b
-    tmp <- freshTmp
-    emit ("  " ++ tmp ++ " = srem i32 " ++ aReg ++ ", " ++ bReg)
-    return tmp
-compileCall "mod" _ = error "mod requires exactly 2 arguments"
-
--- Comparisons (return 1 or 0)
-compileCall "<" [a, b] = compileCmp "slt" a b
-compileCall ">" [a, b] = compileCmp "sgt" a b
-compileCall "<=" [a, b] = compileCmp "sle" a b
-compileCall ">=" [a, b] = compileCmp "sge" a b
-compileCall "eq?" [a, b] = compileCmp "eq" a b
-compileCall "<" _ = error "< requires exactly 2 arguments"
-compileCall ">" _ = error "> requires exactly 2 arguments"
-compileCall "<=" _ = error "<= requires exactly 2 arguments"
-compileCall ">=" _ = error ">= requires exactly 2 arguments"
-compileCall "eq?" _ = error "eq? requires exactly 2 arguments"
-
--- Print (for debugging)
-compileCall "peric" args = mapM_ emitPrint args >> emitZero
-
--- Unknown function call - try to look it up as a variable
-compileCall name args = do
-    env <- gets varEnv
-    case Map.lookup name env of
-        Just _  -> callKnownVar args
-        Nothing -> error ("Unknown function: " ++ name)
-
-emitPrint :: Ast -> Compiler ()
-emitPrint arg = do
-    reg <- compileAst arg
-    tmp <- freshTmp
-    emit ("  " ++ tmp ++ " = call i32 (i8*, ...) @printf" ++ printArgs reg)
-  where printArgs r = "(i8* getelementptr ([4 x i8], " ++
-                      "[4 x i8]* @.fmt_int, i32 0, i32 0), i32 " ++ r ++ ")"
-
-callKnownVar :: [Ast] -> Compiler String
-callKnownVar [] = emitZero
-callKnownVar args = last <$> mapM compileAst args
-
-emitZero :: Compiler String
-emitZero = do
-    tmp <- freshTmp
-    emit ("  " ++ tmp ++ " = add i32 0, 0")
-    return tmp
-
--- Helper: fold binary operation
-foldBinOp :: String -> String -> [String] -> Compiler String
-foldBinOp _ identity [] = do
-    tmp <- freshTmp
-    emit ("  " ++ tmp ++ " = add i32 0, " ++ identity)
-    return tmp
-foldBinOp _ _ [r] = return r
-foldBinOp op _ (r:rs) = foldBinOpWith op r rs
-
-foldBinOpWith :: String -> String -> [String] -> Compiler String
-foldBinOpWith _ acc [] = return acc
-foldBinOpWith op acc (r:rs) = do
-    tmp <- freshTmp
-    emit ("  " ++ tmp ++ " = " ++ op ++ " i32 " ++ acc ++ ", " ++ r)
-    foldBinOpWith op tmp rs
-
--- Helper: compile comparison
-compileCmp :: String -> Ast -> Ast -> Compiler String
-compileCmp cmpOp a b = do
-    aReg <- compileAst a
-    bReg <- compileAst b
-    cmpTmp <- freshTmp
-    emit ("  " ++ cmpTmp ++ " = icmp " ++ cmpOp ++ cmpArgs aReg bReg)
-    resultTmp <- freshTmp
-    emit ("  " ++ resultTmp ++ " = zext i1 " ++ cmpTmp ++ " to i32")
-    return resultTmp
-  where cmpArgs ar br = " i32 " ++ ar ++ ", " ++ br
-
--- Write LLVM IR to a file
+-- Write LLVM IR to a file (minimal implementation)
 compileToLL :: FilePath -> Ast -> IO ()
-compileToLL out ast = writeFile out (compileModuleLLVM ast)
+compileToLL out _ = writeFile out (compileModuleLLVM (SList []))
 
--- Produce a .o by piping IR directly to clang (no temp .ll file)
+-- Produce a .o by compiling AST to VM bytecode and writing the file
 compileToObject :: FilePath -> Ast -> IO ()
 compileToObject out ast = do
-    (Just hin, _, _, ph) <- createProcess clangProc
-    hPutStr hin (compileModuleLLVM ast) >> hClose hin
-    _ <- waitForProcess ph
+    let asm = emitASM ast
+        asmFile = "/tmp/glados_emit.s"
+    -- Write assembly to a temp file (debug-friendly), assemble, then remove it
+    writeFile asmFile asm
+    _ <- callCommand ("as -o " ++ out ++ " " ++ asmFile)
+    -- keep asm file for inspection (debugging)
+    -- _ <- callCommand ("rm -f " ++ asmFile)
     return ()
-  where clangProc = (proc "clang" ["-x", "ir", "-c", "-", "-o", out])
-                    { std_in = CreatePipe }
+
+
+
+-- Two-pass compilation: collect top-level defines, compile functions, then compile main
+compileProgram :: Ast -> [Instruction]
+compileProgram (Block xs) =
+    let (defAsts, others) = partition isDefine xs
+        isDefine (Define _ _ _) = True
+        isDefine _ = False
+        defs = map (\f -> case f of Define name _ val -> (name, val); _ -> error "impossible") defAsts
+
+        -- Build function address map and concatenated function instruction list
+        (addrMap', funcInstrs) = buildFuncMap defs
+
+        mainInstrs = concatMap (compileAstToBytecodeWith addrMap') others
+    in funcInstrs ++ mainInstrs ++ [HALT]
+compileProgram a = compileAstToBytecode a ++ [HALT]
+
+buildFuncMap :: [(String, Ast)] -> (Map.Map String Int32, [Instruction])
+buildFuncMap defs = go defs Map.empty [] 0
+  where
+    go [] m acc _ = (m, acc)
+    go ((name, val):rest) m acc offset =
+        let instrs = compileFuncBody val
+            m' = Map.insert name (fromIntegral offset :: Int32) m
+            offset' = offset + length instrs
+            acc' = acc ++ instrs
+        in go rest m' acc' offset'
+
+compileFuncBody :: Ast -> [Instruction]
+compileFuncBody (AstLambda params body) = compileAstToBytecode body ++ [RET]
+compileFuncBody body = compileAstToBytecode body ++ [RET]
+
+
+-- Compile AST to bytecode instructions (simple, incremental)
+compileAstToBytecode :: Ast -> [Instruction]
+compileAstToBytecode (AstInt n) = [PUSH (fromIntegral n :: Int32)]
+compileAstToBytecode (AstBool True) = [PUSH_TRUE]
+compileAstToBytecode (AstBool False) = [PUSH_FALSE]
+compileAstToBytecode (AstSymbol name) = [LOAD_GLOBAL name]
+compileAstToBytecode (AstString s) = [LOAD_CONST s]
+compileAstToBytecode (Block xs) = compileBlock xs
+compileAstToBytecode (Define name _ maybeBody) =
+    case maybeBody of
+        body -> compileAstToBytecode body ++ [STORE_GLOBAL name]
+compileAstToBytecode (Assign name val) = compileAstToBytecode val ++ [STORE_GLOBAL name]
+compileAstToBytecode (Call fn args) = compileCallBytecode Map.empty fn args
+compileAstToBytecode _ = [PUSH 0]
+
+compileBlock :: [Ast] -> [Instruction]
+compileBlock [] = []
+compileBlock [x] = compileAstToBytecode x
+compileBlock (x:xs) = compileAstToBytecode x ++ [POP] ++ compileBlock xs
+
+compileCallBytecode :: Map.Map String Int32 -> Ast -> [Ast] -> [Instruction]
+compileCallBytecode _ (AstSymbol "peric") (arg:_) = compileAstToBytecode arg ++ [PRINT]
+compileCallBytecode addrMap (AstSymbol name) args
+    | name `elem` ["+", "add"] = compileFold args ADD
+    | name `elem` ["-","sub"] = compileFold args SUB
+    | name `elem` ["*","mul"] = compileFold args MUL
+    | name `elem` ["/"] = compileFold args DIV
+    | name `elem` ["%"] = compileFold args BC.MOD
+    | name `elem` ["<"] = compileFold args BC.LT
+    | name `elem` ["=="] = compileFold args BC.EQ
+    | otherwise =
+                    let compiledArgs = concatMap (compileAstToBytecodeWith addrMap) args
+                        lowerMap = Map.fromList [ (map toLower k, v) | (k,v) <- Map.toList addrMap ]
+                    in case Map.lookup name addrMap of
+                        Just addr -> compiledArgs ++ [CALL addr]
+                        Nothing -> case Map.lookup (map toLower name) lowerMap of
+                            Just a -> compiledArgs ++ [CALL a]
+                            Nothing -> compiledArgs ++ [PUSH 0]
+compileCallBytecode addrMap fn args = concatMap (compileAstToBytecodeWith addrMap) args ++ [PUSH 0]
+
+compileAstToBytecodeWith :: Map.Map String Int32 -> Ast -> [Instruction]
+compileAstToBytecodeWith addrMap a =
+    case a of
+        AstInt n -> [PUSH (fromIntegral n :: Int32)]
+        AstBool True -> [PUSH_TRUE]
+        AstBool False -> [PUSH_FALSE]
+        AstSymbol name -> [LOAD_GLOBAL name]
+        AstString s -> [LOAD_CONST s]
+        Block xs -> concatMap (compileAstToBytecodeWith addrMap) xs
+        Define name _ val -> [] -- top-level handled separately
+        Assign name val -> compileAstToBytecodeWith addrMap val ++ [STORE_GLOBAL name]
+        Call fn args -> compileCallBytecode addrMap fn args
+        _ -> [PUSH 0]
+
+compileFold :: [Ast] -> Instruction -> [Instruction]
+compileFold [] _ = [PUSH 0]
+compileFold [x] op = compileAstToBytecode x
+compileFold (x:xs) op = concatMap compileAstToBytecode (x:xs) ++ replicate (length xs) op
+
+
+-- Emit x86_64 assembly (AT&T syntax) for simple TheShow programs.
+emitASM :: Ast -> String
+emitASM ast =
+    let strs = collectStrings ast
+        labels = zip strs [0..]
+        rodata = concatMap emitData labels
+        funcs = collectFuncs ast
+        text = emitText ast labels funcs
+    in rodata ++ "\n" ++ text
+
+emitData :: (String, Int) -> String
+emitData (s, i) = ".section .rodata\n.globl LC" ++ show i ++ "\nLC" ++ show i ++ ":\n\t.string \"" ++ escapeASM s ++ "\"\n"
+
+emitText :: Ast -> [(String, Int)] -> Map.Map String Ast -> String
+emitText ast labels funcs = unlines $
+    [".text", ".globl main", ".type main,@function", "main:", "\tpushq %rbp", "\tmovq %rsp, %rbp"]
+    ++ map ("\t" ++) (emitStmts ast labels funcs)
+    ++ ["\t.Lreturn:", "\tpopq %rbp", "\tret"]
+
+emitStmts :: Ast -> [(String, Int)] -> Map.Map String Ast -> [String]
+emitStmts (Block xs) labels funcs = concatMap (\x -> stmtToASM x labels funcs) xs
+emitStmts a labels funcs = stmtToASM a labels funcs
+
+stmtToASM :: Ast -> [(String, Int)] -> Map.Map String Ast -> [String]
+stmtToASM (Call (AstSymbol "peric") (AstString s : _)) labels _ =
+    let idx = lookupLabel s labels
+    in ["leaq LC" ++ show idx ++ "(%rip), %rdi", "call puts"]
+stmtToASM (Call (AstSymbol name) args) labels funcs =
+    case Map.lookup name funcs of
+        Just (AstLambda _ body) -> emitStmts body labels funcs
+        _ -> ["call " ++ name]
+stmtToASM (Return (AstInt n)) _ _ = ["movl $" ++ show n ++ ", %eax", "jmp .Lreturn"]
+stmtToASM (Define _ _ _) _ _ = []
+stmtToASM _ _ _ = []
+
+lookupLabel :: String -> [(String, Int)] -> Int
+lookupLabel s labels = case lookup s labels of
+    Just i -> i
+    Nothing -> 0
+
+collectStrings :: Ast -> [String]
+collectStrings (Block xs) = concatMap collectStrings xs
+collectStrings (Call (AstSymbol "peric") (AstString s : _)) = [s]
+collectStrings (Call _ args) = concatMap collectStrings args
+collectStrings (Define _ _ v) = collectStrings v
+collectStrings (AstLambda _ body) = collectStrings body
+collectStrings (Return a) = collectStrings a
+collectStrings (Assign _ a) = collectStrings a
+collectStrings (ArrayAssign _ _ a) = collectStrings a
+collectStrings _ = []
+
+collectFuncs :: Ast -> Map.Map String Ast
+collectFuncs (Block xs) = foldl collect Map.empty xs
+  where
+    collect m (Define name _ (AstLambda params body)) = Map.insert name (AstLambda params body) m
+    collect m _ = m
+collectFuncs _ = Map.empty
+
+escapeASM :: String -> String
+escapeASM = concatMap esc
+  where
+    esc '\\' = "\\\\"
+    esc '"' = "\\\""
+    esc '\n' = "\\n"
+    esc c = [c]
+ 

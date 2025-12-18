@@ -427,7 +427,7 @@ parsePrint = do
   content <- many (noneOf "\"")
   _ <- char '"'
   _ <- char ')'
-  return $ SList [SSymbol "print", SList [SSymbol "string", SSymbol content]]
+  return $ SList [SSymbol "call", SSymbol "peric", SList [SString content]]
 
 -- | Function definition: Deschodt funcName(params) -> retType body
 parseFuncDef :: Parser SExpr
@@ -446,10 +446,11 @@ parseFuncDef = do
     parseType
   spaceConsumer
   body <- parseBlock
-  return $ SList [SSymbol "define-func", SSymbol name,
-                  SList params,
-                  fromMaybe (SSymbol "void") retType,
-                  SList body]
+  -- Convert to (fun name params retType body)
+  let ret = case retType of
+              Just t -> t
+              Nothing -> SSymbol "void"
+  return $ SList [SSymbol "fun", SSymbol name, SList params, ret, SList body]
 
 -- | Parse function parameters: (a -> int, b -> int)
 parseParams :: Parser [SExpr]
@@ -457,17 +458,13 @@ parseParams = sepBy parseParam (char ',' >> spaceConsumer)
 
 parseParam :: Parser SExpr
 parseParam = do
-  pname <- optional $ try $ do
-    n <- identifier
-    spaceConsumer
-    _ <- string "->"
-    spaceConsumer
-    return n
-  case pname of
-    Just n -> do
-      ty <- parseType
-      return $ SList [SSymbol n, ty]
-    Nothing -> return $ SList []
+  pname <- identifier
+  spaceConsumer
+  _ <- string "->"
+  spaceConsumer
+  ty <- parseType
+  spaceConsumer
+  return $ SList [SSymbol pname, ty]
 
 -- | Function call: funcName(arg1, arg2)
 parseFuncCall :: Parser SExpr
@@ -477,7 +474,7 @@ parseFuncCall = do
   spaceConsumer
   args <- sepBy parseExpr (char ',' >> spaceConsumer)
   _ <- char ')'
-  return $ SList ([SSymbol "call", SSymbol name] ++ args)
+  return $ SList ([SSymbol "call", SSymbol name, SList args])
 
 -- | Parse a block of statements (indentation-based)
 parseBlock :: Parser [SExpr]

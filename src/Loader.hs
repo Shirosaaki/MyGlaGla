@@ -84,6 +84,8 @@ encodeInstruction instr =
         STORE_VAR idx -> BS.cons (opcodeOf instr) (encodeInt32 idx)
         LOAD_GLOBAL name -> BS.cons (opcodeOf instr) (encodeString name)
         STORE_GLOBAL name -> BS.cons (opcodeOf instr) (encodeString name)
+        LOAD_CONST s -> BS.cons (opcodeOf instr) (encodeString s)
+        PRINT -> BS.singleton (opcodeOf PRINT)
         MAKE_CLOSURE addr nparams -> 
             BS.cons (opcodeOf instr) (BS.append (encodeInt32 addr) (encodeInt32 nparams))
         _ -> BS.singleton (opcodeOf instr)

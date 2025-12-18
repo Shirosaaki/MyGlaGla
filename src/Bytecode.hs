@@ -33,6 +33,8 @@ data Instruction
     | MAKE_CLOSURE Int32 Int32
     | PUSH_TRUE
     | PUSH_FALSE
+    | PRINT
+    | LOAD_CONST String
     | HALT
     deriving (Show, Eq)
 
@@ -63,6 +65,8 @@ opcodeOf (STORE_GLOBAL _) = 0x11
 opcodeOf (MAKE_CLOSURE _ _) = 0x12
 opcodeOf PUSH_TRUE = 0x13
 opcodeOf PUSH_FALSE = 0x14
+opcodeOf PRINT = 0x15
+opcodeOf (LOAD_CONST _) = 0x16
 opcodeOf HALT = 0xFF
 
 decodeOpcode :: Word8 -> Maybe (BS.ByteString -> Maybe (Instruction, BS.ByteString))
@@ -86,6 +90,8 @@ decodeOpcode 0x11 = Just decodeSTORE_GLOBAL
 decodeOpcode 0x12 = Just decodeMAKE_CLOSURE
 decodeOpcode 0x13 = Just $ \bs -> Just (PUSH_TRUE, bs)
 decodeOpcode 0x14 = Just $ \bs -> Just (PUSH_FALSE, bs)
+decodeOpcode 0x15 = Just $ \bs -> Just (PRINT, bs)
+decodeOpcode 0x16 = Just decodeLOAD_CONST
 decodeOpcode 0xFF = Just $ \bs -> Just (HALT, bs)
 decodeOpcode _ = Nothing
 
@@ -123,6 +129,11 @@ decodeLOAD_GLOBAL :: BS.ByteString -> Maybe (Instruction, BS.ByteString)
 decodeLOAD_GLOBAL bs = do
     (name, rest) <- decodeString bs
     Just (LOAD_GLOBAL name, rest)
+
+decodeLOAD_CONST :: BS.ByteString -> Maybe (Instruction, BS.ByteString)
+decodeLOAD_CONST bs = do
+    (s, rest) <- decodeString bs
+    Just (LOAD_CONST s, rest)
 
 decodeSTORE_GLOBAL :: BS.ByteString -> Maybe (Instruction, BS.ByteString)
 decodeSTORE_GLOBAL bs = do

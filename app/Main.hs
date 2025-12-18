@@ -46,9 +46,24 @@ compileFromStdin compile = do
     input <- getContents
     case parseSExprMultipleEither input of
         Left err -> die ("Parsing error:\n" ++ err)
-        Right sexprs -> case mapM sexprToAST sexprs of
-            Left perr -> die perr
-            Right asts -> compile (Block asts)
+        Right sexprs -> do
+            -- Debug: print the parsed S-expressions before converting to AST
+            putStrLn "--- SExpr (parsed) ---"
+            print sexprs
+            putStrLn "----------------------"
+            case mapM sexprToAST sexprs of
+                Left perr -> die perr
+                Right asts -> do
+                    -- If program is a single top-level zero-arg function, auto-invoke it.
+                    let asts' = case asts of
+                                    [def@(Define name _ (AstLambda params _))] | null params ->
+                                        [def, Call (AstSymbol name) []]
+                                    _ -> asts
+                    -- Print ASTs being sent to the compiler for inspection
+                    putStrLn "--- AST (parsed) ---"
+                    print asts'
+                    putStrLn "--------------------"
+                    compile (Block asts')
 
 -- Execute a source file
 runFileMode :: FilePath -> IO ()
@@ -67,7 +82,9 @@ runVMMode path = do
         Left err -> hPutStrLn stderr ("*** ERROR: " ++ err) >>
                     exitWith (ExitFailure 84)
         Right instrs -> do
-            case runVM instrs of
+            let (res, outs) = runVM instrs
+            mapM_ putStrLn outs
+            case res of
                 Left err -> hPutStrLn stderr ("*** RUNTIME ERROR: " ++ err) >>
                             exitWith (ExitFailure 84)
                 Right val -> printVMResult val

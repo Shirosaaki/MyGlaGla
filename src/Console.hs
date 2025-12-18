@@ -62,7 +62,9 @@ execBlock env acc =
 -- | Evaluate a list of s-expressions in the REPL context.
 evalReplSequence :: Env -> [SExpr] -> ReplM ()
 evalReplSequence env [] = repl env
-evalReplSequence env (s:ss) =
+evalReplSequence env (s:ss) = do
+    -- Debug: show the S-expression received before converting to AST
+    outputStrLn ("[debug] SExpr -> " ++ show s)
     case sexprToAST s of
         Right ast -> evalReplAst env ss ast
         Left err -> liftIO (printError err) >> repl env
@@ -86,7 +88,9 @@ runBatch input =
 
 evalSequence :: Env -> [SExpr] -> IO ()
 evalSequence _ [] = return ()
-evalSequence env (s:ss) =
+evalSequence env (s:ss) = do
+    -- Debug: print S-expression before converting to AST (batch mode)
+    putStrLn ("[debug] SExpr -> " ++ show s)
     case sexprToAST s of
         Right ast ->
             case evalAST env ast of
