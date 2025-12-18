@@ -268,6 +268,29 @@ emitStmts a labels funcs consts locals retLabel = stmtToASM a labels funcs const
 
 
 stmtToASM :: Ast -> [(String, Int)] -> Map.Map String Ast -> Map.Map String String -> Map.Map String Int -> String -> [String]
+stmtToASM (IfElse cond thenBlock elseBlock) labels funcs consts locals retLabel =
+    let lbl = abs (hash (show cond ++ show thenBlock ++ show elseBlock)) `mod` 100000
+        lElse = ".Lelse_" ++ show lbl
+        lEnd = ".Lendif_" ++ show lbl
+        condAsm = case cond of
+            Call (AstSymbol op) [AstSymbol v, AstInt n] ->
+                case Map.lookup v locals of
+                    Just off -> let load = ["movq -" ++ show off ++ "(%rbp), %rax"]
+                                    cmp = ["cmpq $" ++ show n ++ ", %rax"]
+                                    jfalse = case op of
+                                                "==" -> "jne " ++ lElse
+                                                "<"  -> "jge " ++ lElse
+                                                ">"  -> "jle " ++ lElse
+                                                "<=" -> "jg " ++ lElse
+                                                ">=" -> "jl " ++ lElse
+                                                _     -> "je " ++ lElse
+                                in load ++ cmp ++ [jfalse]
+                    Nothing -> ["movq $0, %rax", "cmpq $" ++ show n ++ ", %rax", "je " ++ lElse]
+            _ -> compileExprFor locals cond ++ ["cmpq $0, %rax", "je " ++ lElse]
+        thenAsm = concatMap (\s -> stmtToASM s labels funcs consts locals retLabel) (case thenBlock of Block xs -> xs; _ -> [thenBlock])
+        elseAsm = concatMap (\s -> stmtToASM s labels funcs consts locals retLabel) (case elseBlock of Block xs -> xs; _ -> [elseBlock])
+    in condAsm ++ thenAsm ++ ["jmp " ++ lEnd] ++ [lElse ++ ":"] ++ elseAsm ++ [lEnd ++ ":"]
+
 stmtToASM (Call (AstSymbol "peric") (AstString s : _)) labels _ _ _ _ =
     let idx = lookupLabel s labels
     in ["leaq LC" ++ show idx ++ "(%rip), %rdi", "call puts"]
@@ -483,7 +506,7 @@ collectStrings consts (Call (AstSymbol "peric") (Call (AstSymbol "string-interp"
                    in fmt : partsStrs
 collectStrings consts (Call _ args) = concatMap (collectStrings consts) args
 collectStrings _ (AstString s) = [s]
-collectStrings consts (Define _ _ v) = collectStrings consts v
+collectStrings consts (IfElse cond thenBlock elseBlock) = collectStrings consts cond ++ collectStrings consts thenBlock ++ collectStrings consts elseBlock
 collectStrings consts (AstLambda _ body) = collectStrings consts body
 collectStrings consts (Return a) = collectStrings consts a
 collectStrings consts (Assign _ a) = collectStrings consts a

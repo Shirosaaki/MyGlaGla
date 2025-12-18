@@ -364,8 +364,9 @@ parseIf = do
   _ <- char ':'
   thenBranch <- parseBlock
   elseBranch <- optional $ do
-    
+    spaceConsumer
     _ <- string "deschelse"
+    spaceConsumer
     _ <- char ':'
     parseBlock
   return $ SList [SSymbol "if", cond, SList thenBranch,
