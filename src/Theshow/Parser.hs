@@ -203,7 +203,7 @@ parseAddSubRest :: SExpr -> Parser SExpr
 parseAddSubRest left = do
   rest <- optional (try $ do
     spaceConsumer
-    op <- (char '+' >> return "+") <|> (char '-' >> return "-")
+    op <- (char '+' >> return "+") <|> try (char '-' <* notFollowedBy (char '>') >> return "-")
     spaceConsumer
     right <- parseMulDiv
     return (op, right))
@@ -427,7 +427,32 @@ parsePrint = do
   content <- many (noneOf "\"")
   _ <- char '"'
   _ <- char ')'
-  return $ SList [SSymbol "call", SSymbol "peric", SList [SString content]]
+  -- parse interpolations like {var} into a string-interp SExpr
+  let parts = parseInterp content
+      partsSExpr = SList parts
+      interp = SList [SSymbol "string-interp", partsSExpr]
+  return $ SList [SSymbol "call", SSymbol "peric", SList [interp]]
+
+
+-- Split a string like "x = {x}, y = {y}" into SExpr parts
+parseInterp :: String -> [SExpr]
+parseInterp s = reverse (go s [])
+  where
+  go :: String -> [SExpr] -> [SExpr]
+  go "" acc = acc
+  go str acc =
+    case break (=='{') str of
+      (before, "") -> (if null before then acc else SString before : acc)
+      (before, '{':rest) ->
+        let (var, remain) = span (/= '}') rest in
+        case remain of
+          -- no closing brace: treat the whole chunk as literal
+          "" -> (SString (before ++ "{" ++ var) : acc)
+          -- found closing brace: add before (if any) and symbol, continue after brace
+          ('}':after) ->
+            let acc' = (if null before then acc else SString before : acc)
+            in go after (SSymbol var : acc')
+          _ -> (SString before : acc)
 
 -- | Function definition: Deschodt funcName(params) -> retType body
 parseFuncDef :: Parser SExpr

@@ -189,6 +189,12 @@ sexprToAST (SList [SSymbol "call", SSymbol name, SList args]) =
         Right argAsts -> Right (Call (AstSymbol name) argAsts)
         Left err -> Left err
 
+-- string interpolation form: (string-interp (parts...)) -> represent as a call
+sexprToAST (SList [SSymbol "string-interp", SList parts]) =
+    case mapM sexprToAST parts of
+        Right partAsts -> Right (Call (AstSymbol "string-interp") partAsts)
+        Left err -> Left err
+
 -- lambda
 sexprToAST (SList [SSymbol "lambda", SList params, body]) =
     case mapM paramNameE params of
@@ -363,8 +369,33 @@ evalOpCall env ">=" args =
         Left err -> Left err
 evalOpCall env "peric" args =
     case evalArgs env args of
-        Right (_, env') -> Right (AstVoid, env')  -- Just return void, actual print handled elsewhere
+        Right ([AstString s], env') -> Right (AstString s, env')
+        Right ([a], env') -> Right (AstString (astToString a), env')
+        Right (asList, env') -> Right (AstString (concatMap astToString asList), env')
         Left err -> Left err
+  where
+    astToString :: Ast -> String
+    astToString (AstString s) = s
+    astToString (AstInt n) = show n
+    astToString (AstFloat f) = show f
+    astToString (AstBool True) = "#t"
+    astToString (AstBool False) = "#f"
+    astToString (AstChar c) = [c]
+    astToString other = show other
+
+evalOpCall env "string-interp" args =
+    case evalArgs env args of
+        Right (parts, env') -> Right (AstString (concatMap astToString parts), env')
+        Left err -> Left err
+  where
+    astToString :: Ast -> String
+    astToString (AstString s) = s
+    astToString (AstInt n) = show n
+    astToString (AstFloat f) = show f
+    astToString (AstBool True) = "#t"
+    astToString (AstBool False) = "#f"
+    astToString (AstChar c) = [c]
+    astToString other = show other
 evalOpCall env "range" args =
     case evalArgs env args of
         Right ([AstInt _, AstInt _], env') ->
