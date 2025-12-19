@@ -231,15 +231,18 @@ buildFormatString (_:xs) = "%ld" ++ buildFormatString xs
 
 collectStrings :: Ast -> [String]
 collectStrings (AstString s) = [s]
-collectStrings (Assign _ (AstString s)) = [s]
+collectStrings (Define _ _ (AstString s)) = [s] -- Captures "Mathéo"
+collectStrings (Define _ _ val) = collectStrings val
+collectStrings (Assign _ val) = collectStrings val
 collectStrings (Call (AstSymbol "peric") [Call (AstSymbol "string-interp") parts]) = 
-    [buildFormatString (flattenStringInterp parts) ++ "\n"]
+    [buildFormatString (flattenStringInterp parts) ++ "\n"] ++ concatMap collectStrings parts
 collectStrings (Block xs) = concatMap collectStrings xs
-collectStrings (IfElse _ th el) = collectStrings th ++ collectStrings el
-collectStrings (Call (AstSymbol "for") [_, _, _, body]) = collectStrings body
-collectStrings (Call (AstSymbol "while") [_, body]) = collectStrings body
+collectStrings (IfElse c th el) = collectStrings c ++ collectStrings th ++ collectStrings el
+collectStrings (Call (AstSymbol "for") [_, start, end, body]) = 
+    collectStrings start ++ collectStrings end ++ collectStrings body
+collectStrings (Call (AstSymbol "while") [cond, body]) = 
+    collectStrings cond ++ collectStrings body
 collectStrings (Call _ args) = concatMap collectStrings args
 collectStrings _ = []
-
 uniqueList = foldl (\acc x -> if x `elem` acc then acc else acc ++ [x]) []
 escapeASM = concatMap (\c -> if c == '\n' then "\\n" else [c])
