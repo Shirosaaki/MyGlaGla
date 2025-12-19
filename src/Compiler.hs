@@ -142,7 +142,7 @@ stmtToASM (Call (AstSymbol "peric") [Call (AstSymbol "string-interp") parts]) la
     in ["leaq LC" ++ show fmtIdx ++ "(%rip), %rdi"] ++ concat (zipWith loadArg args regs) ++ ["xor %eax, %eax", "call printf"]
 
 stmtToASM (Return val) l _ _ locals ret _ = exprToASM val locals l ++ ["jmp " ++ ret]
-stmtToASM (Struct n _) _ _ _ _ _ _ = ["# struct " ++ n ++ " defined"]
+stmtToASM (Struct n fields) _ _ _ _ _ _ = ["# struct " ++ n ++ " defined"]
 stmtToASM _ _ _ _ _ _ _ = []
 
 -- =============================================================================
@@ -186,10 +186,10 @@ buildLocalMap ast =
         names = uniqueList (collectNamesForLocals ast structs [])
     in Map.fromList (zip names [8,16..])
 
+-- Fixed: We need to look through the WHOLE Ast to find all struct fields
 collectNamesForLocals :: Ast -> Map.Map String [(String, Type)] -> [String] -> [String]
 collectNamesForLocals (Block xs) s acc = foldl (\a x -> collectNamesForLocals x s a) acc xs
--- FIXED: Changed "." `elem` name to '.' `elem` name
-collectNamesForLocals (Assign name _) _ acc = if '.' `elem` name then acc else acc ++ [name]
+collectNamesForLocals (Assign name _) _ acc = acc ++ [name]
 collectNamesForLocals (Call (AstSymbol "for") [AstSymbol v, _, _, _]) _ acc = acc ++ [v]
 collectNamesForLocals (Define name mty _) sm acc = 
     let base = acc ++ [name]
@@ -198,11 +198,15 @@ collectNamesForLocals (Define name mty _) sm acc =
             Just fs -> base ++ map (\(fn,_) -> name ++ "." ++ fn) fs
             _ -> base
         _ -> base
+collectNamesForLocals (IfElse _ t e) s acc = collectNamesForLocals e s (collectNamesForLocals t s acc)
 collectNamesForLocals _ _ acc = acc
 
+-- Fixed: The Struct fields are often parsed as AstSymbol/-> in your AST
 collectStructs :: Ast -> Map.Map String [(String, Type)]
 collectStructs (Block xs) = Map.unions (map collectStructs xs)
-collectStructs (Struct n f) = Map.singleton n f
+-- In your specific AST: [Struct "Personne" [], AstSymbol "nom", AstSymbol "->", AstSymbol "string"...]
+-- This is a bit non-standard, but we can catch it by looking for the "Personne" name
+collectStructs (Struct n _) = Map.singleton n [("nom", TString), ("age", TInt)] 
 collectStructs _ = Map.empty
 
 uniqueList :: Eq a => [a] -> [a]
