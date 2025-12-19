@@ -113,16 +113,16 @@ evalSequence env (s:ss) =
 
 printResult' :: Ast -> IO ()
 printResult' (AstInt n) = print n
-printResult' (AstBool True) = putStrLn "#t"
-printResult' (AstBool False) = putStrLn "#f"
+printResult' (AstBool True) = print 1
+printResult' (AstBool False) = print 0
 printResult' AstVoid = return ()
 printResult' (AstClosure _ _ _) = putStrLn "#<procedure>"
 printResult' result = print result
 
 printVMResult :: VM.VMValue -> IO ()
 printVMResult (VM.VMInt n) = print n
-printVMResult (VM.VMBool True) = putStrLn "#t"
-printVMResult (VM.VMBool False) = putStrLn "#f"
+printVMResult (VM.VMBool True) = print 1
+printVMResult (VM.VMBool False) = print 0
 printVMResult VM.VMVoid = return ()
 printVMResult (VM.VMClosure _ _ _) = putStrLn "#<procedure>"
 

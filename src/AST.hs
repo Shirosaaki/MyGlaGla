@@ -48,7 +48,7 @@ data Ast = Define String (Maybe Type) Ast           -- variable/function definit
          | Return Ast
          | ArrayAccess Ast Ast                       -- array[index]
          | ArrayAssign String Ast Ast               -- array[index] = value
-         | StructField Ast String                    -- struct.field
+         | Struct String [(String, Type)]            -- struct definition (name, fields)
          | StructFieldAssign String String Ast      -- struct.field = value
          | Block [Ast]                               -- sequence of statements
          | TypedVar String Type Ast                  -- variable with explicit type and init value
@@ -77,6 +77,18 @@ extractParamName :: SExpr -> Either String String
 extractParamName (SList [SSymbol n, _]) = Right n
 extractParamName _ = Left "fun: parameter must be a (name type) list"
 
+-- Helper: convert an SExpr representing a type into a Type value
+parseTypeSExpr :: SExpr -> Either String Type
+parseTypeSExpr (SSymbol "int") = Right TInt
+parseTypeSExpr (SSymbol "float") = Right TFloat
+parseTypeSExpr (SSymbol "string") = Right TString
+parseTypeSExpr (SSymbol "bool") = Right TBool
+parseTypeSExpr (SSymbol "char") = Right TChar
+parseTypeSExpr (SSymbol "void") = Right TVoid
+parseTypeSExpr (SSymbol other) = Right (TCustom other)
+parseTypeSExpr (SList [SSymbol "array-type", SSymbol base]) = Right (TCustom (base ++ "[]"))
+parseTypeSExpr _ = Left "bad type"
+
 makeCallArgs :: Ast -> [SExpr] -> Either String Ast
 makeCallArgs fnAst args = fmap (Call fnAst) (mapM sexprToAST args)
 
@@ -95,6 +107,10 @@ sexprToAST (SBool b) = Right (AstBool b)
 sexprToAST (SString s) = Right (AstString s)
 sexprToAST (SChar c) = Right (AstChar c)
 sexprToAST (SList []) = Right (AstList [])
+
+-- Handle parser's string S-expr form: (string "content") or (string contentSymbol)
+sexprToAST (SList [SSymbol "string", SSymbol s]) = Right (AstString s)
+sexprToAST (SList [SSymbol "string", SString s]) = Right (AstString s)
 
 -- top-level sequence of statements: treat a list of lists as a Block
 sexprToAST (SList xs) | all isSList xs =
@@ -121,14 +137,20 @@ sexprToAST (SList [SSymbol "fun", SSymbol name, SList params, _ret, SList body])
         Left err -> Left err
 
 -- variable declaration: (eric name type [value])
-sexprToAST (SList (SSymbol "eric" : rest)) =
-    case rest of
-        (SSymbol name : _type : xs) ->
-            let valSexpr = if null xs then SSymbol "unit" else head xs
-            in case sexprToAST valSexpr of
-                Right v -> Right (Define name Nothing v)
-                Left e -> Left e
-        _ -> Left "eric: bad syntax"
+sexprToAST (SList (SSymbol "eric" : SSymbol name : ty : xs)) =
+    let valSexpr = if null xs then SSymbol "unit" else head xs
+        parseTypeSExpr (SSymbol "int") = Right TInt
+        parseTypeSExpr (SSymbol "float") = Right TFloat
+        parseTypeSExpr (SSymbol "string") = Right TString
+        parseTypeSExpr (SSymbol "bool") = Right TBool
+        parseTypeSExpr (SSymbol other) = Right (TCustom other)
+        parseTypeSExpr (SList [SSymbol "array-type", SSymbol base]) = Right (TCustom (base ++ "[]"))
+        parseTypeSExpr _ = Left "eric: bad type"
+    in case (sexprToAST valSexpr, parseTypeSExpr ty) of
+        (Right v, Right t) -> Right (Define name (Just t) v)
+        (Left e, _) -> Left e
+        (_, Left e) -> Left e
+sexprToAST (SList (SSymbol "eric" : rest)) = Left "eric: bad syntax"
 
 -- return
 sexprToAST (SList [SSymbol "return", expr]) =
@@ -190,23 +212,53 @@ sexprToAST (SList [SSymbol "call", SSymbol name, SList args]) =
         Left err -> Left err
 
 -- define: (define name value?) emitted by parser for `eric` and some constructs
-sexprToAST (SList [SSymbol "define", SSymbol name, val, _]) =
-    case sexprToAST val of
-        Right v -> Right (Define name Nothing v)
+sexprToAST (SList [SSymbol "define", SSymbol name, val, ty]) =
+    case (sexprToAST val, parseTypeSExpr ty) of
+        (Right v, Right t) -> Right (Define name (Just t) v)
+        (Left e, _) -> Left e
+        (_, Left e) -> Left e
+sexprToAST (SList [SSymbol "define", SSymbol name, SSymbol ty]) =
+    case parseTypeSExpr (SSymbol ty) of
+        Right t -> Right (Define name (Just t) AstVoid)
         Left e -> Left e
-sexprToAST (SList [SSymbol "define", SSymbol name, _]) = Right (Define name Nothing AstVoid)
+  where
+    parseTypeSExpr (SSymbol "int") = Right TInt
+    parseTypeSExpr (SSymbol "float") = Right TFloat
+    parseTypeSExpr (SSymbol "string") = Right TString
+    parseTypeSExpr (SSymbol "bool") = Right TBool
+    parseTypeSExpr (SSymbol other) = Right (TCustom other)
+    parseTypeSExpr (SList [SSymbol "array-type", SSymbol base]) = Right (TCustom (base ++ "[]"))
+    parseTypeSExpr _ = Left "define: bad type"
 
--- assign: (assign name value)
+-- assign: (assign name value)  OR  (assign (member-access obj field) value)
+sexprToAST (SList [SSymbol "assign", SList (SSymbol "member-access" : SSymbol obj : SSymbol field : []) , value]) =
+    case sexprToAST value of
+        Right v -> Right (Assign (obj ++ "." ++ field) v)
+        Left e -> Left e
 sexprToAST (SList [SSymbol "assign", SSymbol name, value]) =
     case sexprToAST value of
         Right v -> Right (Assign name v)
         Left e -> Left e
 
--- string interpolation form: (string-interp (parts...)) -> represent as a call
-sexprToAST (SList [SSymbol "string-interp", SList parts]) =
-    case mapM sexprToAST parts of
-        Right partAsts -> Right (Call (AstSymbol "string-interp") partAsts)
+-- struct: (struct name (field1 type1) (field2 type2) ...)
+sexprToAST (SList (SSymbol "struct" : SSymbol name : fields)) =
+    let parseField (SList [SSymbol fname, SSymbol tyStr]) = case parseTypeSExpr (SSymbol tyStr) of
+            Right t -> Right (fname, t)
+            Left e -> Left e
+        parseField _ = Left "struct field: bad syntax"
+        (fieldExprs, rest) = span isField fields
+        isField (SList [SSymbol _, SSymbol _]) = True
+        isField _ = False
+    in case mapM parseField fieldExprs of
+        Right fs ->
+            case rest of
+                [] -> Right (Struct name fs)
+                _  -> case mapM sexprToAST rest of
+                        Right more -> Right (Block (Struct name fs : more))
+                        Left e -> Left e
         Left err -> Left err
+
+
 
 -- lambda
 sexprToAST (SList [SSymbol "lambda", SList params, body]) =
@@ -391,8 +443,8 @@ evalOpCall env "peric" args =
     astToString (AstString s) = s
     astToString (AstInt n) = show n
     astToString (AstFloat f) = show f
-    astToString (AstBool True) = "#t"
-    astToString (AstBool False) = "#f"
+    astToString (AstBool True) = "1"
+    astToString (AstBool False) = "0"
     astToString (AstChar c) = [c]
     astToString other = show other
 
@@ -405,8 +457,8 @@ evalOpCall env "string-interp" args =
     astToString (AstString s) = s
     astToString (AstInt n) = show n
     astToString (AstFloat f) = show f
-    astToString (AstBool True) = "#t"
-    astToString (AstBool False) = "#f"
+    astToString (AstBool True) = "1"
+    astToString (AstBool False) = "0"
     astToString (AstChar c) = [c]
     astToString other = show other
 evalOpCall env "range" args =

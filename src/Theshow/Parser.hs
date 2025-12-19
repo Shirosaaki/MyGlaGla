@@ -109,12 +109,15 @@ symbolAtom = do
 
 identifier :: Parser String
 identifier = do
-    first <- oneOf validFirstChars
-    rest <- many (oneOf validRestChars)
-    return (first : rest)
+    ident <- do
+        first <- oneOf validFirstChars
+        rest <- many (oneOf validRestChars)
+        return (first : rest)
+    if ident `elem` keywords then fail ("keyword " ++ ident) else return ident
   where
     validFirstChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
     validRestChars = validFirstChars ++ "0123456789"
+    keywords = ["destruct", "deschodt", "erif", "deschelse", "darius", "aer", "eric", "peric", "desnum", "desnote"]
 
 -- ============================================================================
 -- Types
@@ -283,9 +286,11 @@ parseStruct = do
   _ <- string "destruct"
   spaceConsumer
   name <- identifier
-  _ <- char ':'
   spaceConsumer
-  fields <- many parseStructField
+  _ <- char ':'
+  -- fields may be absent, inlined on the same line, or provided as a newline-indented block
+  let inlineSpace = many (char ' ' <|> char '\t')
+  fields <- try parseStructFieldsBlock <|> (inlineSpace >> many parseStructField)
   return $ SList ([SSymbol "struct", SSymbol name] ++ fields)
 
 parseStructField :: Parser SExpr
@@ -297,6 +302,27 @@ parseStructField = do
   ftype <- parseType
   spaceConsumer
   return $ SList [SSymbol fname, ftype]
+
+parseStructFieldsBlock :: Parser [SExpr]
+parseStructFieldsBlock = parseStructFieldsBlockMin 0
+
+parseStructFieldsBlockMin :: Int -> Parser [SExpr]
+parseStructFieldsBlockMin minIndent = do
+  -- count indentation of first field
+  indents <- some (char ' ' <|> char '\t')
+  let indentCount = length indents
+  if indentCount <= minIndent
+    then fail "insufficient indentation for struct fields block"
+    else do
+      first <- parseStructField
+      _ <- many (char '\n')
+      rest <- many $ try $ do
+        -- require same indentation for other fields in this block
+        _ <- count indentCount (char ' ' <|> char '\t')
+        f <- parseStructField
+        _ <- many (char '\n')
+        return f
+      return (first : rest)
 
 -- | Variable definition: eric x = 5 -> int  OR  eric x -> int
 parseDef :: Parser SExpr
