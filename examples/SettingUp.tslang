@@ -1,0 +1,98 @@
+desnote ==============================================
+desnote                 setting_up_light.tslang
+desnote  Light EPITECH "setting_up" implemented in TSL
+desnote ==============================================
+
+Deschodt Eric() -> int
+    eric content -> string
+    eric rows = 0 -> int
+    eric cols = 0 -> int
+    eric idx = 0 -> int
+    eric val = 0 -> int
+    eric seen_space = 0 -> int
+    eric start = 0 -> int
+    desnote parse header: "rows cols" then newline
+    eric parsing = 1 -> int
+    content = renaud("file.txt")
+    darius (parsing == 1):
+        eric ch = content[idx] -> char
+        erif (ch == desnote\ ):
+            rows = val
+            val = 0
+            seen_space = 1
+        deschelse:
+            erif (ch == desnote\n):
+                if (seen_space == 0): rows = val
+                deschelse:
+                    cols = val
+                start = idx + 1
+                parsing = 0
+            deschelse:
+                desnote digit to int: subtract '0'
+                val = val * 10 + (ch - desnote\0)
+        idx = idx + 1
+    desnote create a linear nums array for DP (rows * cols)
+    eric nums -> int[]
+    eric max_size = 0 -> int
+    eric best_pos = 0 -> int
+    eric i = 0 -> int
+    eric j = 0 -> int
+    desnote fill nums: 1 for empty '.', 0 for obstacle 'o'
+    eric pos = start -> int
+    eric r = 0 -> int
+    aer r in range(0, rows):
+        aer c in range(0, cols):
+            eric ch2 = content[pos] -> char
+            erif (ch2 == desnote\n):
+                desnote skip stray newlines
+                c = c - 1
+            deschelse:
+                if (ch2 == desnote\o):
+                    nums[r * cols + c] = 0
+                deschelse:
+                    nums[r * cols + c] = 1
+                pos = pos + 1
+    desnote DP: compute largest square using 1D mapping
+    aer r in range(0, rows):
+        aer c in range(0, cols):
+            eric idxn = r * cols + c -> int
+            erif (nums[idxn] == 1):
+                if (r == 0 || c == 0):
+                    nums[idxn] = 1
+                deschelse:
+                    eric left = nums[r * cols + (c - 1)] -> int
+                    eric up = nums[(r - 1) * cols + c] -> int
+                    eric diag = nums[(r - 1) * cols + (c - 1)] -> int
+                    eric mn = left -> int
+                    if (up < mn): mn = up
+                    if (diag < mn): mn = diag
+                    nums[idxn] = mn + 1
+                if (nums[idxn] > max_size):
+                    max_size = nums[idxn]
+                    best_pos = idxn
+    desnote mark result on a char array and print
+    eric out -> string[]
+    desnote initialize out lines from content
+    eric line_start = start -> int
+    aer r in range(0, rows):
+        eric line = "" -> string
+        aer c in range(0, cols):
+            eric ch3 = content[line_start] -> char
+            line = line + ch3
+            line_start = line_start + 1
+        out[r] = line
+        desnote skip newline
+        line_start = line_start + 1
+    eric srow = best_pos / cols -> int
+    eric scol = best_pos % cols -> int
+    eric sr = srow - max_size + 1 -> int
+    eric sc = scol - max_size + 1 -> int
+    aer rr in range(sr, sr + max_size):
+        aer cc in range(sc, sc + max_size):
+            eric linev = out[rr] -> string
+            desnote replace char at cc with 'x'
+            linev = linev[0:cc] + "x" + linev[cc + 1:]
+            out[rr] = linev
+    aer r in range(0, rows):
+        peric(out[r])
+    deschodt 0
