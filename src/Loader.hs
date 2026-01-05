@@ -29,8 +29,7 @@ loadBytecodeFile path = do
 
 -- Parse bytecode from ByteString
 parseBytecodeFile :: BS.ByteString -> Either String [Instruction]
-parseBytecodeFile bs = do
-    -- Check magic number
+parseBytecodeFile bs =
     if BS.take 4 bs /= BS.pack magicNumber
         then Left "Invalid file format: bad magic number"
         else parseVersion (BS.drop 4 bs)
@@ -41,14 +40,21 @@ parseVersion bs
     | BS.head bs /= versionNumber = Left "Unsupported version"
     | otherwise = parseInstructions (BS.tail bs) []
 
+decodeAndParse :: Word8 -> BS.ByteString -> Either String (Instruction, BS.ByteString)
+decodeAndParse opcode bs = do
+    decoder <- maybe (Left $ "Unknown opcode: 0x" ++ showHex opcode) 
+                     Right 
+                     (decodeOpcode opcode)
+    maybe (Left "Failed to decode instruction") 
+          Right 
+          (decoder bs)
+
 -- Parse all instructions
 parseInstructions :: BS.ByteString -> [Instruction] -> Either String [Instruction]
 parseInstructions bs acc
     | BS.null bs = Right (reverse acc)
     | otherwise = do
-        let opcode = BS.head bs
-        decoder <- maybe (Left $ "Unknown opcode: 0x" ++ showHex opcode) Right (decodeOpcode opcode)
-        (instr, rest) <- maybe (Left "Failed to decode instruction") Right (decoder (BS.tail bs))
+        (instr, rest) <- decodeAndParse (BS.head bs) (BS.tail bs)
         parseInstructions rest (instr : acc)
 
 -- Helper to show hex
@@ -60,9 +66,9 @@ showHex w =
 
 -- Save bytecode to a .o file
 saveBytecodeFile :: FilePath -> [Instruction] -> IO ()
-saveBytecodeFile path instrs = do
+saveBytecodeFile path instrs =
     let encoded = encodeBytecodeFile instrs
-    BS.writeFile path encoded
+    in BS.writeFile path encoded
 
 -- Encode bytecode to ByteString
 encodeBytecodeFile :: [Instruction] -> BS.ByteString
@@ -72,29 +78,35 @@ encodeBytecodeFile instrs =
         code = BS.concat (map encodeInstruction instrs)
     in BS.concat [magic, version, code]
 
+encodeWithInt32 :: Instruction -> Int32 -> BS.ByteString
+encodeWithInt32 instr n = BS.cons (opcodeOf instr) (encodeInt32 n)
+
+encodeWithString :: Instruction -> String -> BS.ByteString
+encodeWithString instr s = BS.cons (opcodeOf instr) (encodeString s)
+
 -- Encode a single instruction
 encodeInstruction :: Instruction -> BS.ByteString
-encodeInstruction instr = 
-    case instr of
-        PUSH n -> BS.cons (opcodeOf instr) (encodeInt32 n)
-        JUMP addr -> BS.cons (opcodeOf instr) (encodeInt32 addr)
-        JUMP_IF_FALSE addr -> BS.cons (opcodeOf instr) (encodeInt32 addr)
-        CALL addr -> BS.cons (opcodeOf instr) (encodeInt32 addr)
-        LOAD_VAR idx -> BS.cons (opcodeOf instr) (encodeInt32 idx)
-        STORE_VAR idx -> BS.cons (opcodeOf instr) (encodeInt32 idx)
-        LOAD_GLOBAL name -> BS.cons (opcodeOf instr) (encodeString name)
-        STORE_GLOBAL name -> BS.cons (opcodeOf instr) (encodeString name)
-        LOAD_CONST s -> BS.cons (opcodeOf instr) (encodeString s)
-        PRINT -> BS.singleton (opcodeOf PRINT)
-        MAKE_CLOSURE addr nparams -> 
-            BS.cons (opcodeOf instr) (BS.append (encodeInt32 addr) (encodeInt32 nparams))
-        _ -> BS.singleton (opcodeOf instr)
+encodeInstruction (PUSH n) = encodeWithInt32 (PUSH n) n
+encodeInstruction (JUMP addr) = encodeWithInt32 (JUMP addr) addr
+encodeInstruction (JUMP_IF_FALSE addr) = 
+    encodeWithInt32 (JUMP_IF_FALSE addr) addr
+encodeInstruction (CALL addr) = encodeWithInt32 (CALL addr) addr
+encodeInstruction (LOAD_VAR idx) = encodeWithInt32 (LOAD_VAR idx) idx
+encodeInstruction (STORE_VAR idx) = encodeWithInt32 (STORE_VAR idx) idx
+encodeInstruction (LOAD_GLOBAL name) = 
+    encodeWithString (LOAD_GLOBAL name) name
+encodeInstruction (STORE_GLOBAL name) = 
+    encodeWithString (STORE_GLOBAL name) name
+encodeInstruction (LOAD_CONST s) = encodeWithString (LOAD_CONST s) s
+encodeInstruction (MAKE_CLOSURE addr nparams) = 
+    BS.cons (opcodeOf (MAKE_CLOSURE addr nparams)) 
+            (BS.append (encodeInt32 addr) (encodeInt32 nparams))
+encodeInstruction instr = BS.singleton (opcodeOf instr)
 
 -- Encode Int32 as 4 bytes (big-endian)
 encodeInt32 :: Int32 -> BS.ByteString
 encodeInt32 n =
     let n' = fromIntegral n :: Int
-        -- Handle negative numbers
         n'' = if n' < 0 then n' + 2^(32::Int) else n'
         b0 = fromIntegral ((n'' `shiftR` 24) .&. 0xFF)
         b1 = fromIntegral ((n'' `shiftR` 16) .&. 0xFF)
