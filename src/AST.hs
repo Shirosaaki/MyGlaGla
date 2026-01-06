@@ -47,6 +47,7 @@ data Ast = Define String (Maybe Type) Ast           -- variable/function definit
          | Continue
          | Return Ast
          | ArrayAccess Ast Ast                       -- array[index]
+         | Slice Ast Ast Ast                         -- array[start:end]
          | ArrayAssign String Ast Ast               -- array[index] = value
          | Struct String [(String, Type)]            -- struct definition (name, fields)
          | StructFieldAssign String String Ast      -- struct.field = value
@@ -87,6 +88,7 @@ parseTypeSExpr (SSymbol "char") = Right TChar
 parseTypeSExpr (SSymbol "void") = Right TVoid
 parseTypeSExpr (SSymbol other) = Right (TCustom other)
 parseTypeSExpr (SList [SSymbol "array-type", SSymbol base]) = Right (TCustom (base ++ "[]"))
+parseTypeSExpr (SList [SSymbol "fixed-array-type", SSymbol base, SInt size]) = Right (TCustom (base ++ "[" ++ show size ++ "]"))
 parseTypeSExpr _ = Left "bad type"
 
 makeCallArgs :: Ast -> [SExpr] -> Either String Ast
@@ -139,13 +141,6 @@ sexprToAST (SList [SSymbol "fun", SSymbol name, SList params, _ret, SList body])
 -- variable declaration: (eric name type [value])
 sexprToAST (SList (SSymbol "eric" : SSymbol name : ty : xs)) =
     let valSexpr = if null xs then SSymbol "unit" else head xs
-        parseTypeSExpr (SSymbol "int") = Right TInt
-        parseTypeSExpr (SSymbol "float") = Right TFloat
-        parseTypeSExpr (SSymbol "string") = Right TString
-        parseTypeSExpr (SSymbol "bool") = Right TBool
-        parseTypeSExpr (SSymbol other) = Right (TCustom other)
-        parseTypeSExpr (SList [SSymbol "array-type", SSymbol base]) = Right (TCustom (base ++ "[]"))
-        parseTypeSExpr _ = Left "eric: bad type"
     in case (sexprToAST valSexpr, parseTypeSExpr ty) of
         (Right v, Right t) -> Right (Define name (Just t) v)
         (Left e, _) -> Left e
@@ -161,26 +156,23 @@ sexprToAST (SList [SSymbol "return", expr]) =
 -- comment: ignore / map to AstList []
 sexprToAST (SList [SSymbol "comment", SString _]) = Right (AstList [])
 
--- assignment: (= target value)
-sexprToAST (SList [SSymbol "=", target, value]) =
-    case target of
-        SSymbol name ->
-            case sexprToAST value of
-                Right v -> Right (Assign name v)
-                Left e -> Left e
-        SList (SSymbol "index" : SSymbol arr : idx : _) ->
-            case (sexprToAST idx, sexprToAST value) of
-                (Right i, Right v) -> Right (ArrayAssign arr i v)
-                (Left e, _) -> Left e
-                (_, Left e) -> Left e
-        _ -> Left "=: unsupported target"
+-- assignment: (= target value) or (assign target value)
+sexprToAST (SList [SSymbol "=", target, value]) = sexprToAST (SList [SSymbol "assign", target, value])
 
--- array access: (index arr idx)
-sexprToAST (SList [SSymbol "index", arr, idx]) =
+-- array access: (array-access arr idx) or (index arr idx)
+sexprToAST (SList [sym, arr, idx]) | sym == SSymbol "array-access" || sym == SSymbol "index" =
     case (sexprToAST arr, sexprToAST idx) of
         (Right a, Right i) -> Right (ArrayAccess a i)
         (Left e, _) -> Left e
         (_, Left e) -> Left e
+
+-- slice: (slice arr start end)
+sexprToAST (SList [SSymbol "slice", arr, start, end]) =
+    case (sexprToAST arr, sexprToAST start, sexprToAST end) of
+        (Right a, Right s, Right e) -> Right (Slice a s e)
+        (Left err, _, _) -> Left err
+        (_, Left err, _) -> Left err
+        (_, _, Left err) -> Left err
 
 -- for loop: (aer var (range s e) body)
 sexprToAST (SList [SSymbol "aer", SSymbol var, SList (SSymbol "range" : s:e:[]), SList body]) =
@@ -217,28 +209,38 @@ sexprToAST (SList [SSymbol "define", SSymbol name, val, ty]) =
         (Right v, Right t) -> Right (Define name (Just t) v)
         (Left e, _) -> Left e
         (_, Left e) -> Left e
-sexprToAST (SList [SSymbol "define", SSymbol name, SSymbol ty]) =
-    case parseTypeSExpr (SSymbol ty) of
+sexprToAST (SList [SSymbol "define", SSymbol name, tySexpr]) =
+    case parseTypeSExpr tySexpr of
         Right t -> Right (Define name (Just t) AstVoid)
         Left e -> Left e
-  where
-    parseTypeSExpr (SSymbol "int") = Right TInt
-    parseTypeSExpr (SSymbol "float") = Right TFloat
-    parseTypeSExpr (SSymbol "string") = Right TString
-    parseTypeSExpr (SSymbol "bool") = Right TBool
-    parseTypeSExpr (SSymbol other) = Right (TCustom other)
-    parseTypeSExpr (SList [SSymbol "array-type", SSymbol base]) = Right (TCustom (base ++ "[]"))
-    parseTypeSExpr _ = Left "define: bad type"
 
 -- assign: (assign name value)  OR  (assign (member-access obj field) value)
 sexprToAST (SList [SSymbol "assign", SList (SSymbol "member-access" : SSymbol obj : SSymbol field : []) , value]) =
     case sexprToAST value of
         Right v -> Right (Assign (obj ++ "." ++ field) v)
         Left e -> Left e
-sexprToAST (SList [SSymbol "assign", SSymbol name, value]) =
-    case sexprToAST value of
-        Right v -> Right (Assign name v)
-        Left e -> Left e
+sexprToAST (SList [SSymbol "assign", targetSexpr, valueSexpr]) =
+    case (sexprToAST targetSexpr, sexprToAST valueSexpr) of
+        (Right (AstSymbol name), Right v) -> Right (Assign name v)
+        (Right (ArrayAccess (AstSymbol name) idx), Right v) -> Right (ArrayAssign name idx v)
+        (Right (ArrayAccess target idx), Right v) ->
+             -- Nested array access: target[idx] = v.
+             -- If target is also an ArrayAccess, we might need more logic or just emit it as a call for now.
+             -- But usually it's name[idx1][idx2] which translates to (ArrayAccess (ArrayAccess name idx1) idx2).
+             case target of
+                AstSymbol name -> Right (ArrayAssign name idx v)
+                _ -> Right (Call (AstSymbol "assign") [ArrayAccess target idx, v])
+        (Right t, Right v) -> Right (Call (AstSymbol "assign") [t, v])
+        (Left e, _) -> Left e
+        (_, Left e) -> Left e
+
+-- array-decl: (array-decl target index type)
+sexprToAST (SList [SSymbol "array-decl", target, idx, ty]) =
+    case (sexprToAST target, sexprToAST idx, parseTypeSExpr ty) of
+        (Right t, Right i, Right _) -> Right (Call (AstSymbol "array-decl") [t, i])
+        (Left e, _, _) -> Left e
+        (_, Left e, _) -> Left e
+        (_, _, Left e) -> Left e
 
 -- struct: (struct name (field1 type1) (field2 type2) ...)
 sexprToAST (SList (SSymbol "struct" : SSymbol name : fields)) =
