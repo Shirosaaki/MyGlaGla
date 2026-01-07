@@ -152,51 +152,11 @@ step state (JUMP_IF_FALSE addr) =
             Right state { stack = rest, pc = pc state + 1 }
         _ -> Left "Type error in JUMP_IF_FALSE"
 
-setupClosureCall :: VMState -> Int32 -> [VMValue] -> [VMValue] -> VMState
-setupClosureCall state closureAddr capturedEnv args =
-    let frame = CallFrame (pc state + 1) (locals state)
-        newLocals = reverse args ++ capturedEnv
-    in state 
-        { pc = fromIntegral closureAddr
-        , callStack = frame : callStack state
-        , locals = newLocals
-        }
-
-callClosure :: VMState -> Int32 -> Int32 -> [VMValue] -> [VMValue] -> Either String VMState
-callClosure state closureAddr nparams capturedEnv args =
-    if length args < fromIntegral nparams
-        then Left "Not enough arguments for closure call"
-        else
-            let (actualArgs, rest) = splitAt (fromIntegral nparams) args
-                newState = setupClosureCall state closureAddr 
-                                            capturedEnv actualArgs
-            in Right newState { stack = rest }
-
-callFunction :: VMState -> Int32 -> Either String VMState
-callFunction state addr =
-    let newPc = fromIntegral addr
-    in if newPc >= 0 && newPc < length (program state)
-        then 
-            let frame = CallFrame (pc state + 1) (locals state)
-            in Right state 
-                { pc = newPc
-                , callStack = frame : callStack state
-                }
-        else Left "Call address out of bounds"
-
 step state (CALL addr) =
     case stack state of
         (VMClosure closureAddr nparams capturedEnv : args) ->
             callClosure state closureAddr nparams capturedEnv args
         _ -> callFunction state addr
-
-returnFromCall :: VMState -> CallFrame -> [CallFrame] -> VMValue -> VMState
-returnFromCall state frame rest retVal =
-    state 
-        { pc = returnAddress frame
-        , callStack = rest
-        , locals = savedLocals frame
-        }
 
 step state RET =
     case callStack state of
@@ -213,20 +173,6 @@ step state (LOAD_VAR idx) =
     in if index >= 0 && index < length (locals state)
         then Right state 
             { stack = (locals state !! index) : stack state
-            , pc = pc state + 1
-            }
-        else Left "Variable index out of bounds"
-
-updateLocal :: Int -> VMValue -> [VMValue] -> [VMValue]
-updateLocal index val localsList =
-    take index localsList ++ [val] ++ drop (index + 1) localsList
-
-storeVariable :: VMState -> Int -> VMValue -> [VMValue] -> Either String VMState
-storeVariable state index val rest =
-    if index >= 0 && index < length (locals state)
-        then Right state 
-            { stack = rest
-            , locals = updateLocal index val (locals state)
             , pc = pc state + 1
             }
         else Left "Variable index out of bounds"
@@ -267,6 +213,66 @@ step state HALT =
 
 step state (LOAD_CONST s) =
     Right state { stack = VMString s : stack state, pc = pc state + 1 }
+step state PRINT =
+    case stack state of
+        (val : rest) -> doPrint state val rest
+        [] -> Left "Stack underflow on PRINT"
+
+-- Helper functions moved below so all `step` equations are contiguous
+
+setupClosureCall :: VMState -> Int32 -> [VMValue] -> [VMValue] -> VMState
+setupClosureCall state closureAddr capturedEnv args =
+    let frame = CallFrame (pc state + 1) (locals state)
+        newLocals = reverse args ++ capturedEnv
+    in state 
+        { pc = fromIntegral closureAddr
+        , callStack = frame : callStack state
+        , locals = newLocals
+        }
+
+callClosure :: VMState -> Int32 -> Int32 -> [VMValue] -> [VMValue] -> Either String VMState
+callClosure state closureAddr nparams capturedEnv args =
+    if length args < fromIntegral nparams
+        then Left "Not enough arguments for closure call"
+        else
+            let (actualArgs, rest) = splitAt (fromIntegral nparams) args
+                newState = setupClosureCall state closureAddr 
+                                            capturedEnv actualArgs
+            in Right newState { stack = rest }
+
+callFunction :: VMState -> Int32 -> Either String VMState
+callFunction state addr =
+    let newPc = fromIntegral addr
+    in if newPc >= 0 && newPc < length (program state)
+        then 
+            let frame = CallFrame (pc state + 1) (locals state)
+            in Right state 
+                { pc = newPc
+                , callStack = frame : callStack state
+                }
+        else Left "Call address out of bounds"
+
+returnFromCall :: VMState -> CallFrame -> [CallFrame] -> VMValue -> VMState
+returnFromCall state frame rest retVal =
+    state 
+        { pc = returnAddress frame
+        , callStack = rest
+        , locals = savedLocals frame
+        }
+
+updateLocal :: Int -> VMValue -> [VMValue] -> [VMValue]
+updateLocal index val localsList =
+    take index localsList ++ [val] ++ drop (index + 1) localsList
+
+storeVariable :: VMState -> Int -> VMValue -> [VMValue] -> Either String VMState
+storeVariable state index val rest =
+    if index >= 0 && index < length (locals state)
+        then Right state 
+            { stack = rest
+            , locals = updateLocal index val (locals state)
+            , pc = pc state + 1
+            }
+        else Left "Variable index out of bounds"
 
 printValue :: VMValue -> Maybe String
 printValue (VMString s) = Just s
@@ -285,7 +291,3 @@ doPrint state val rest =
                 }
         Nothing -> Left "Unsupported type for PRINT"
 
-step state PRINT =
-    case stack state of
-        (val : rest) -> doPrint state val rest
-        [] -> Left "Stack underflow on PRINT"
