@@ -60,6 +60,7 @@ desnote                 example.tslang
 desnote  Author: shirosaaki
 desnote  Date: 2025-12-11
 desnote =============================================
+
 desnote Good Practice Example
 Deschodt goodExample(a -> int, b -> int) -> int
     eric result = 0 -> int

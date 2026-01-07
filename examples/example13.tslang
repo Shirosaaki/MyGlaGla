@@ -5,7 +5,7 @@ Deschodt somme(tab -> int[], taille -> int) -> int
     deschodt total
 
 Deschodt Eric() -> int
-    eric valeurs -> int[4]
+    eric valeurs -> int[]
     valeurs[0] = 4
     valeurs[1] = 7
     valeurs[2] = 2

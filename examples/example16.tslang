@@ -1,3 +1,9 @@
+desnote ==============================================
+desnote                 example16.tslang
+desnote  Author: shirosaaki
+desnote  Date: 2026-01-07
+desnote =============================================
+
 Deschodt Eric() -> int
     eric matix3x3 -> int[]
     matix3x3[0] -> int[]

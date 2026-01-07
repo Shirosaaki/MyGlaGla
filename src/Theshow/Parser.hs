@@ -32,7 +32,7 @@ import Debug.Trace (trace)
 type Parser = Parsec Void String
 
 keywords :: [String]
-keywords = ["destruct", "deschodt", "erif", "deschelse", "darius", "aer", "eric", "peric", "desnum", "desnote", "Deschodt", "deschontinue", "deschreak"]
+keywords = ["destruct", "deschodt", "erif", "deschelse", "darius", "aer", "eric", "peric", "desnum", "desnote", "deschontinue", "deschreak"]
 
 -- ============================================================================
 -- Public API
@@ -318,7 +318,6 @@ parseStmt = choice
   [ try parseComment
   , try parseEnum
   , try parseStruct
-  , try parseFuncDef
   , try parseDef
   , try parseAssign
   , try parseArrayDecl
@@ -499,7 +498,7 @@ parseWhile = do
   _ <- char ':'
   _ <- many (oneOf " \t")
   body <- parseBlock
-  return $ SList [SSymbol "darius", cond, SList body]
+  return $ SList [SSymbol "while", cond, SList body]
 
 -- | For loop: aer i in range(start, end): body
 parseFor :: Parser SExpr
@@ -522,7 +521,7 @@ parseFor = do
   _ <- char ':'
   _ <- many (oneOf " \t")
   body <- parseBlock
-  return $ SList [SSymbol "aer", SSymbol var, SList [SSymbol "range", start, end], SList body]
+  return $ SList [SSymbol "for", SSymbol var, start, end, SList body]
 
 -- | Return statement: deschodt value
 parseReturn :: Parser SExpr
@@ -584,41 +583,8 @@ parseInterp s = reverse (go s [])
             in go after (SSymbol var : acc')
           _ -> (SString before : acc)
 
--- | Function definition: Deschodt funcName(params) -> retType body
-parseFuncDef :: Parser SExpr
-parseFuncDef = do
-  _ <- string "Deschodt"
-  spaceConsumer
-  name <- identifier
-  _ <- char '('
-  params <- parseParams
-  _ <- char ')'
-  spaceConsumer
-  retType <- optional $ do
-    _ <- string "->"
-    spaceConsumer
-    parseType
-  _ <- many (oneOf " \t")
-  body <- parseBlock
-  -- Convert to (fun name params retType body)
-  let ret = case retType of
-              Just t -> t
-              Nothing -> SSymbol "void"
-  return $ SList [SSymbol "fun", SSymbol name, SList params, ret, SList body]
+-- | Function definition: Deschodt funcName(params) -> retType body (REMOVED)
 
--- | Parse function parameters: (a -> int, b -> int)
-parseParams :: Parser [SExpr]
-parseParams = sepBy parseParam (char ',' >> spaceConsumer)
-
-parseParam :: Parser SExpr
-parseParam = do
-  pname <- identifier
-  spaceConsumer
-  _ <- string "->"
-  spaceConsumer
-  ty <- parseType
-  spaceConsumer
-  return $ SList [SSymbol pname, ty]
 
 -- | Function call: funcName(arg1, arg2)
 parseFuncCall :: Parser SExpr
