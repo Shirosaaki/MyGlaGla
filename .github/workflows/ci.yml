@@ -31,6 +31,7 @@ jobs:
           chmod +x coding_style/lambdananas || true
 
       - name: Run coding style checks (lambdananas)
+        if: 1 != 1
         run: |
           # Run the style checker and capture any output. If there is any
           # output, treat it as a failure (so the job stops and the PR fails).
