@@ -31,7 +31,7 @@ import Data.Maybe (fromMaybe)
 type Parser = Parsec Void String
 
 keywords :: [String]
-keywords = ["destruct", "deschodt", "erif", "deschelse", "darius", "aer", "eric", "peric", "desnum", "desnote", "deschontinue", "deschreak"]
+keywords = ["destruct", "deschodt", "Deschodt", "erif", "deschelse", "darius", "aer", "eric", "peric", "desnum", "desnote", "deschontinue", "deschreak"]
 
 -- ============================================================================
 -- Public API
@@ -69,6 +69,10 @@ spaceConsumer = L.space
 lineComment :: Parser ()
 lineComment = (try (string "desnote" >> notFollowedBy (char '\\')) >> void (takeWhileP (Just "comment content") (/= '\n')))
            <|> (string ";" >> void (takeWhileP (Just "comment content") (/= '\n')))
+
+-- Helper to skip optional horizontal space then a newline
+skipEOL :: Parser ()
+skipEOL = void $ try (many (oneOf " \t") >> optional (char '\r') >> char '\n')
 
 -- ============================================================================
 -- Basic Atoms
@@ -373,7 +377,6 @@ parseFuncDef = do
   _ <- string "->"
   spaceConsumer
   retType <- parseType
-  -- Do NOT use spaceConsumer here as it eats the newline before parseBlockMin can see indentation
   _ <- many (oneOf " \t")
   body <- parseBlock
   let paramNames = map fst params
@@ -402,9 +405,34 @@ parseEnum = do
   spaceConsumer
   name <- identifier
   _ <- char ':'
-  spaceConsumer
-  values <- many (identifier <* spaceConsumer)
-  return $ SList ([SSymbol "enum", SSymbol name] ++ map SSymbol values)
+  -- Capture enum values using indentation awareness
+  values <- try (skipEOL >> parseEnumValuesBlock)
+        <|> (many (oneOf " \t") >> many (identifier <* spaceConsumer))
+  
+  -- Transform enum values into Defines: (block (define Val1 0 int) (define Val2 1 int))
+  let defs = zipWith (\val idx -> 
+          SList [SSymbol "define", SSymbol val, SInt idx, SSymbol "int"]
+        ) values [0..]
+  
+  return $ SList (SSymbol "block" : defs)
+
+parseEnumValuesBlock :: Parser [String]
+parseEnumValuesBlock = do
+  _ <- many (try (many (oneOf " \t")) >> optional (char '\r') >> char '\n')
+  indents <- some (char ' ' <|> char '\t')
+  let indentCount = length indents
+  do
+      first <- identifier
+      _ <- many (char ' ' <|> char '\t')
+      _ <- optional (char '\n')
+      rest <- many $ try $ do
+        _ <- many (try (many (oneOf " \t")) >> char '\n')
+        _ <- count indentCount (char ' ' <|> char '\t')
+        id <- identifier
+        _ <- many (char ' ' <|> char '\t')
+        _ <- optional (char '\n')
+        return id
+      return (first : rest)
 
 parseStruct :: Parser SExpr
 parseStruct = do
@@ -413,8 +441,8 @@ parseStruct = do
   name <- identifier
   spaceConsumer
   _ <- char ':'
-  -- Manual indentation handling logic similar to parseFuncDef
-  fields <- try (char '\n' >> parseStructFieldsBlock)
+  -- Use skipEOL to handle potential spaces before newline
+  fields <- try (skipEOL >> parseStructFieldsBlock)
         <|> (many (oneOf " \t") >> many parseStructField)
   return $ SList ([SSymbol "struct", SSymbol name] ++ fields)
 

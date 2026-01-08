@@ -4,7 +4,8 @@ desnum Jour:
     Mercredi
 
 Deschodt Eric() -> int
-    eric j = Mardi -> Jour
+    eric j -> Jour
+    j = Mardi
     peric("Jour = {j}")
     deschodt 0
 

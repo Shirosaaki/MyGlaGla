@@ -93,7 +93,22 @@ emitText :: Ast -> [(String, Int)] -> Map.Map String Type -> String
 emitText (Block asts) labels vt =
     let (funcs, stmts) = partitionDefines asts
         funcASM = concatMap (emitFunc labels vt) funcs
-        mainAST = Block stmts
+        
+        -- Logic to determine if we need to auto-call Eric
+        hasEric = any (\f -> case f of Define "Eric" _ _ -> True; _ -> False) funcs
+        -- Check if stmts contains any executable code (not just Struct defs or comments)
+        isExecutable (Struct _ _) = False
+        isExecutable (AstList []) = False -- comment
+        isExecutable _ = True
+        
+        hasExecStmts = any isExecutable stmts
+        alreadyCallsEric = any (\s -> case s of Call (AstSymbol "Eric") _ -> True; _ -> False) stmts
+        
+        finalStmts = if hasEric && (not hasExecStmts || not alreadyCallsEric)
+                     then stmts ++ [Call (AstSymbol "Eric") []]
+                     else stmts
+                     
+        mainAST = Block finalStmts
         localMap = buildLocalMap mainAST
         maxOffset = if Map.null localMap then 8 else maximum (Map.elems localMap)
         allocSize = ((maxOffset + 31) `div` 16) * 16
@@ -261,6 +276,8 @@ stmtToASM Break uid _ _ _ _ _ _ li = (uid, [], li)
 stmtToASM Continue uid _ _ _ _ _ _ li = (uid, [], li)
 stmtToASM (Block xs) uid l loc ret ls le vt li = handleBrokenNodes xs uid l loc ret ls le vt li
 stmtToASM (AstList xs) uid l loc ret ls le vt li = handleBrokenNodes xs uid l loc ret ls le vt li
+-- Handle Struct: do nothing
+stmtToASM (Struct _ _) uid _ _ _ _ _ _ li = (uid, [], li)
 stmtToASM a uid l loc _ _ _ vt li = (uid, exprToASM a loc l vt, li)
 
 emitStmts :: Ast -> Int -> [(String, Int)] -> Map.Map String Int -> String -> Maybe String -> Maybe String -> Map.Map String Type -> Map.Map String Int -> (Int, [String], Map.Map String Int)
@@ -337,6 +354,7 @@ collectStrings ast vt = case ast of
     Define _ _ v -> collectStrings v vt
     Assign _ v -> collectStrings v vt
     Call _ args -> concatMap (`collectStrings` vt) args
+    Struct _ _ -> []
     _ -> []
 
 uniqueList :: Eq a => [a] -> [a]
