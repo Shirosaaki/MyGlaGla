@@ -11,7 +11,8 @@ Deschodt Eric() -> int
     valeurs[2] = 2
     valeurs[3] = 9
 
-    eric res = somme(valeurs, 4) -> int
+    eric res -> int
+    res = somme(valeurs, 4)
     peric("Somme = {res}")
     deschodt 0
 

@@ -150,6 +150,12 @@ sexprToAST (SList (SSymbol "eric" : SSymbol name : ty : xs)) =
         (Right v, Right t) -> Right (Define name (Just t) v)
         (Left e, _) -> Left e
         (_, Left e) -> Left e
+sexprToAST (SSymbol "continue") = Right Continue
+sexprToAST (SSymbol "break") = Right Break
+sexprToAST (SList (SSymbol "block" : xs)) = 
+    case mapM sexprToAST xs of
+        Right asts -> Right (Block asts)
+        Left e -> Left e
 sexprToAST (SList (SSymbol "eric" : rest)) = Left "eric: bad syntax"
 
 -- return

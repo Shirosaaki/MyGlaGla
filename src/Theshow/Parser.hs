@@ -27,7 +27,6 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import Data.Void (Void)
 import Control.Monad (void)
 import Data.Maybe (fromMaybe)
-import Debug.Trace (trace)
 
 type Parser = Parsec Void String
 
@@ -177,7 +176,6 @@ identifier = try $ do
 -- Types
 -- ============================================================================
 
--- | Parse type annotations: int, float, string, int[], int*, Personne, etc.
 parseType :: Parser SExpr
 parseType = do
   base <- identifier
@@ -200,7 +198,6 @@ parseType = do
 -- Expressions
 -- ============================================================================
 
--- | Parse a parenthesized expression
 parenExpr :: Parser SExpr
 parenExpr = do
   _ <- char '('
@@ -210,13 +207,11 @@ parenExpr = do
   _ <- char ')'
   return e
 
--- | Parse primary expressions (atoms, parens, array/member access)
 parsePrimary :: Parser SExpr
 parsePrimary = do
   base <- parenExpr <|> try parseFuncCall <|> atom
   parseAccessChain base
 
--- | Parse array indexing and member access chains: x[0], p.name, arr[i].field
 parseAccessChain :: SExpr -> Parser SExpr
 parseAccessChain base = do
   access <- optional (try parseArrayAccess <|> try parseMemberAccess)
@@ -227,7 +222,6 @@ parseAccessChain base = do
     parseArrayAccess = do
       _ <- char '['
       spaceConsumer
-      -- Slice can be [start:end], [:end], [start:], or [index]
       mStart <- optional parseExpr
       spaceConsumer
       mSlice <- optional $ do
@@ -248,7 +242,6 @@ parseAccessChain base = do
       field <- identifier
       return $ \b -> SList [SSymbol "member-access", b, SSymbol field]
 
--- | Parse binary operators with precedence
 parseExpr :: Parser SExpr
 parseExpr = parseLogicalOr
 
@@ -331,14 +324,12 @@ parseMulDivRest left = do
 parseUnary :: Parser SExpr
 parseUnary = parseDeref <|> parseAddrOf <|> parsePrimary
 
--- | Dereference: *ptr
 parseDeref :: Parser SExpr
 parseDeref = do
   _ <- char '*'
   e <- parsePrimary
   return $ SList [SSymbol "deref", e]
 
--- | Address-of: &var
 parseAddrOf :: Parser SExpr
 parseAddrOf = do
   _ <- char '&'
@@ -354,6 +345,7 @@ parseStmt = choice
   [ try parseComment
   , try parseEnum
   , try parseStruct
+  , try parseFuncDef
   , try parseDef
   , try parseAssign
   , try parseArrayDecl
@@ -367,6 +359,36 @@ parseStmt = choice
   , try parseExpr
   ]
 
+parseFuncDef :: Parser SExpr
+parseFuncDef = do
+  _ <- string "Deschodt"
+  spaceConsumer
+  name <- identifier
+  spaceConsumer
+  _ <- char '('
+  spaceConsumer
+  params <- sepBy parseDefParam (char ',' >> spaceConsumer)
+  _ <- char ')'
+  spaceConsumer
+  _ <- string "->"
+  spaceConsumer
+  retType <- parseType
+  -- Do NOT use spaceConsumer here as it eats the newline before parseBlockMin can see indentation
+  _ <- many (oneOf " \t")
+  body <- parseBlock
+  let paramNames = map fst params
+  let lambda = SList [SSymbol "lambda", SList (map SSymbol paramNames), SList (SSymbol "block" : body)]
+  return $ SList [SSymbol "define", SSymbol name, lambda, retType]
+
+parseDefParam :: Parser (String, SExpr)
+parseDefParam = do
+  name <- identifier
+  spaceConsumer
+  _ <- string "->"
+  spaceConsumer
+  ty <- parseType
+  return (name, ty)
+
 parseComment :: Parser SExpr
 parseComment = do
   _ <- string "desnote"
@@ -374,7 +396,6 @@ parseComment = do
   content <- takeWhileP (Just "comment content") (/= '\n')
   return $ SList [SSymbol "comment", SString content]
 
--- | Enum: desnum Status: Inactive Active Graduated
 parseEnum :: Parser SExpr
 parseEnum = do
   _ <- string "desnum"
@@ -385,7 +406,6 @@ parseEnum = do
   values <- many (identifier <* spaceConsumer)
   return $ SList ([SSymbol "enum", SSymbol name] ++ map SSymbol values)
 
--- | Struct: destruct Personne: nom -> string age -> int
 parseStruct :: Parser SExpr
 parseStruct = do
   _ <- string "destruct"
@@ -393,7 +413,7 @@ parseStruct = do
   name <- identifier
   spaceConsumer
   _ <- char ':'
-  -- If we have a newline, it's a block. Otherwise, it's inline.
+  -- Manual indentation handling logic similar to parseFuncDef
   fields <- try (char '\n' >> parseStructFieldsBlock)
         <|> (many (oneOf " \t") >> many parseStructField)
   return $ SList ([SSymbol "struct", SSymbol name] ++ fields)
@@ -401,12 +421,11 @@ parseStruct = do
 parseStructField :: Parser SExpr
 parseStructField = do
   fname <- identifier
-  many (oneOf " \t")
+  _ <- many (oneOf " \t")
   _ <- string "->"
-  many (oneOf " \t")
+  _ <- many (oneOf " \t")
   ftype <- parseType
-  -- Consume trailing spaces on the same line
-  many (oneOf " \t")
+  _ <- many (oneOf " \t")
   return $ SList [SSymbol fname, ftype]
 
 parseStructFieldsBlock :: Parser [SExpr]
@@ -414,8 +433,7 @@ parseStructFieldsBlock = parseStructFieldsBlockMin 0
 
 parseStructFieldsBlockMin :: Int -> Parser [SExpr]
 parseStructFieldsBlockMin minIndent = do
-  -- skip blank lines
-  _ <- many (try (many (oneOf " \t") >> char '\n'))
+  _ <- many (try (many (oneOf " \t")) >> optional (char '\r') >> char '\n')
   indents <- some (char ' ' <|> char '\t')
   let indentCount = length indents
   if indentCount <= minIndent
@@ -425,9 +443,7 @@ parseStructFieldsBlockMin minIndent = do
       _ <- many (char ' ' <|> char '\t')
       _ <- optional (char '\n')
       rest <- many $ try $ do
-        -- skip blank lines
-        _ <- many (try (many (oneOf " \t") >> char '\n'))
-        -- count spaces for each field to ensure they align
+        _ <- many (try (many (oneOf " \t")) >> char '\n')
         _ <- count indentCount (char ' ' <|> char '\t')
         f <- parseStructField
         _ <- many (char ' ' <|> char '\t')
@@ -435,7 +451,6 @@ parseStructFieldsBlockMin minIndent = do
         return f
       return (first : rest)
 
--- | Variable definition: eric x = 5 -> int  OR  eric x -> int
 parseDef :: Parser SExpr
 parseDef = do
   _ <- string "eric"
@@ -463,7 +478,6 @@ parseDefWithoutValue = do
   ty <- parseType
   return $ \name -> SList [SSymbol "define", SSymbol name, ty]
 
--- | Array declaration: eric nu -> int[]  then  nu[0] -> int[]
 parseArrayDecl :: Parser SExpr
 parseArrayDecl = do
   name <- identifier
@@ -484,7 +498,6 @@ parseArrayDecl = do
       finalIdx = last idxs
   return $ SList [SSymbol "array-decl", finalBase, finalIdx, ty]
 
--- | Assignment: x = 5  OR  arr[0] = 10  OR  p.name = "Alice"
 parseAssign :: Parser SExpr
 parseAssign = do
   target <- parsePrimary
@@ -495,10 +508,9 @@ parseAssign = do
   if op == "="
     then return $ SList [SSymbol "assign", target, value]
     else
-      let binOp = init op -- remove '='
+      let binOp = init op
       in return $ SList [SSymbol "assign", target, SList [SSymbol binOp, target, value]]
 
--- | If statement: erif (cond): thenBranch [deschelse: elseBranch]
 parseIf :: Parser SExpr
 parseIf = do
   _ <- string "erif"
@@ -521,7 +533,6 @@ parseIf = do
   return $ SList [SSymbol "if", cond, SList thenBranch,
                   SList (fromMaybe [] elseBranch)]
 
--- | While loop: darius (cond): body
 parseWhile :: Parser SExpr
 parseWhile = do
   _ <- string "darius"
@@ -536,7 +547,6 @@ parseWhile = do
   body <- parseBlock
   return $ SList [SSymbol "while", cond, SList body]
 
--- | For loop: aer i in range(start, end): body
 parseFor :: Parser SExpr
 parseFor = do
   _ <- string "aer"
@@ -559,7 +569,6 @@ parseFor = do
   body <- parseBlock
   return $ SList [SSymbol "for", SSymbol var, start, end, SList body]
 
--- | Return statement: deschodt value
 parseReturn :: Parser SExpr
 parseReturn = do
   _ <- string "deschodt"
@@ -567,19 +576,16 @@ parseReturn = do
   value <- parseExpr
   return $ SList [SSymbol "return", value]
 
--- | Continue: deschontinue
 parseContinue :: Parser SExpr
 parseContinue = do
   _ <- string "deschontinue"
   return $ SSymbol "continue"
 
--- | Break: deschreak
 parseBreak :: Parser SExpr
 parseBreak = do
   _ <- string "deschreak"
   return $ SSymbol "break"
 
--- | Print statement: peric("message {var}")
 parsePrint :: Parser SExpr
 parsePrint = do
   _ <- string "peric("
@@ -598,8 +604,6 @@ parseInterpolatedString = do
       partsSExpr = SList parts
   return $ SList [SSymbol "string-interp", partsSExpr]
 
-
--- Split a string like "x = {x}, y = {y}" into SExpr parts
 parseInterp :: String -> [SExpr]
 parseInterp s = reverse (go s [])
   where
@@ -611,18 +615,13 @@ parseInterp s = reverse (go s [])
       (before, '{':rest) ->
         let (var, remain) = span (/= '}') rest in
         case remain of
-          -- no closing brace: treat the whole chunk as literal
           "" -> (SString (before ++ "{" ++ var) : acc)
-          -- found closing brace: add before (if any) and symbol, continue after brace
           ('}':after) ->
             let acc' = (if null before then acc else SString before : acc)
             in go after (SSymbol var : acc')
           _ -> (SString before : acc)
+      (_, _) -> acc
 
--- | Function definition: Deschodt funcName(params) -> retType body (REMOVED)
-
-
--- | Function call: funcName(arg1, arg2)
 parseFuncCall :: Parser SExpr
 parseFuncCall = do
   name <- identifier
@@ -632,31 +631,20 @@ parseFuncCall = do
   _ <- char ')'
   return $ SList ([SSymbol "call", SSymbol name, SList args])
 
--- parseBlockMin takes a minimum indent (number of spaces/tabs). The first
--- statement in the block must be indented strictly more than `minIndent`.
--- All subsequent statements in the same block must have the same indentation
--- as the first statement. Nested blocks (handled by nested calls) must be
--- indented further.
 parseBlockMin :: Int -> Parser [SExpr]
 parseBlockMin minIndent = do
-  _ <- many (try $ (many (oneOf " \t")) >> char '\n')
-  -- count indentation of first statement
-  indents <- some (char ' ' <|> char '\t')
-  let indentCount = length indents
-  if indentCount <= minIndent
+  _ <- many (try $ (many (oneOf " \t")) >> optional (char '\r') >> char '\n')
+  indentStr <- lookAhead (some (char ' ' <|> char '\t'))
+  if length indentStr <= minIndent
     then fail "insufficient indentation for block"
     else do
-      first <- parseStmt
-      _ <- many (try $ (many (oneOf " \t")) >> char '\n')
-      rest <- many $ try $ do
-        -- require same indentation for other statements in this block
-        _ <- count indentCount (char ' ' <|> char '\t')
+      some $ try $ do
+        _ <- many (try $ (many (oneOf " \t")) >> optional (char '\r') >> char '\n')
+        _ <- string indentStr
         s <- parseStmt
-        _ <- many (try $ (many (oneOf " \t")) >> char '\n')
+        _ <- optional (try $ (many (oneOf " \t")) >> optional (char '\r') >> char '\n')
         return s
-      return (first : rest)
 
--- Convenience wrapper for existing callers when no minimum indent is known
 parseBlock :: Parser [SExpr]
 parseBlock = try parseInlineBlock <|> parseBlockMin 0
 

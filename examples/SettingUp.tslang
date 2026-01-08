@@ -121,8 +121,9 @@ Deschodt Eric() -> int
     eric t = 0 -> int
     darius (map_data[t] != '\n'):
         t += 1
+    t += 1
     aer i in range(t, len - 1):
         tmp[i - t] = map_data[i]
 
-    peric("Result:{tmp}")
+    peric("{tmp}")
     deschodt 0
