@@ -1,8 +1,16 @@
 Deschodt Eric() -> int
-    eric nom = "Mathéo" -> string
+    eric nom = "Mat\n\nhe\no" -> string
     eric age = 21 -> int
+    eric i = 0 -> int
+    eric n = 0 -> int
 
     peric("Bonjour {nom}, tu as {age} ans.")
+    darius (nom[i] != '\0'):
+        peric("{nom[i]}")
+        erif (nom[i] == '\n'):
+            n += 1
+        i += 1
+    peric("Ton nom contient {i} caractères et {n} sauts de ligne.")
     deschodt 0
 
 desnote print Bonjour Mathéo, tu as 21 ans.

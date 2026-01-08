@@ -97,20 +97,56 @@ intAtom = SInt <$> (try negativeInt <|> try positiveInt <|> unsignedInt)
 stringAtom :: Parser SExpr
 stringAtom = do
   _ <- char '"'
-  content <- many (noneOf "\"")
+  content <- escapedStringContent
   _ <- char '"'
   return $ SList [SSymbol "string", SSymbol content]
 
+escapedStringContent :: Parser String
+escapedStringContent = many (escapedChar <|> noneOf "\\\"")
+  where
+    escapedChar = do
+        _ <- char '\\'
+        c <- anySingle
+        case c of
+            'n' -> return '\n'
+            'r' -> return '\r'
+            't' -> return '\t'
+            '0' -> return '\0'
+            '\\' -> return '\\'
+            '"' -> return '\"'
+            _   -> return c
+
 charAtom :: Parser SExpr
-charAtom = do
-  _ <- string "desnote\\"
-  c <- anySingle
-  let val = case c of
-              'n' -> '\n'
-              'r' -> '\r'
-              't' -> '\t'
-              _ -> c
-  return $ SChar val
+charAtom = try oldStyleChar <|> newStyleChar
+  where
+    oldStyleChar = do
+      _ <- string "desnote\\"
+      c <- anySingle
+      let val = case c of
+                  'n' -> '\n'
+                  'r' -> '\r'
+                  't' -> '\t'
+                  _ -> c
+      return $ SChar val
+
+    newStyleChar = do
+      _ <- char '\''
+      c <- try escapeChar <|> anySingle
+      _ <- char '\''
+      return $ SChar c
+    
+    escapeChar = do
+        _ <- char '\\'
+        code <- anySingle
+        case code of
+            'n' -> return '\n'
+            'r' -> return '\r'
+            't' -> return '\t'
+            '0' -> return '\0'
+            '\\' -> return '\\'
+            '\'' -> return '\''
+            '"' -> return '\"'
+            _   -> return code
 
 symbolAtom :: Parser SExpr
 symbolAtom = do
@@ -556,7 +592,7 @@ parsePrint = do
 parseInterpolatedString :: Parser SExpr
 parseInterpolatedString = do
   _ <- char '"'
-  content <- many (noneOf "\"")
+  content <- escapedStringContent
   _ <- char '"'
   let parts = parseInterp content
       partsSExpr = SList parts

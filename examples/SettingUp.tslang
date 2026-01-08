@@ -1,98 +1,125 @@
 desnote ==============================================
 desnote                 setting_up_light.tslang
-desnote  Light EPITECH "setting_up" implemented in TSL
 desnote ==============================================
 
 Deschodt Eric() -> int
-    eric content -> string
-    eric rows = 0 -> int
-    eric cols = 0 -> int
+    eric file -> string
+    file = romaric("Enter the path to the map file: ")
+    eric map_data -> string
+    map_data = renaud(file)
+
+    eric len = 0 -> int
+    darius (map_data[len] != '\0'):
+        len += 1
+
+    desnote --- 1. SKIP HEADER ---
     eric idx = 0 -> int
-    eric val = 0 -> int
-    eric seen_space = 0 -> int
-    eric start = 0 -> int
-    desnote parse header: "rows cols" then newline
-    eric parsing = 1 -> int
-    content = renaud("file.txt")
-    darius (parsing == 1):
-        eric ch = content[idx] -> char
-        erif (ch == desnote\ ):
-            rows = val
-            val = 0
-            seen_space = 1
-        deschelse:
-            erif (ch == desnote\n):
-                erif (seen_space == 0): rows = val
-                deschelse:
-                    cols = val
-                start = idx + 1
-                parsing = 0
-            deschelse:
-                desnote digit to int: subtract '0'
-                val = val * 10 + (ch - desnote\0)
-        idx = idx + 1
-    desnote create a linear nums array for DP (rows * cols)
-    eric nums -> int[]
+    darius (map_data[idx] != '\n'):
+        idx += 1
+    idx += 1
+    eric map_start = idx - 1 -> int
+
+    desnote --- 2. COUNT COLS ---
+    desnote We count columns to define map_width
+    eric nb_cols = 0 -> int
+    darius (map_data[idx] != '\n'):
+        nb_cols += 1
+        idx += 1
+    
+    eric map_width = nb_cols + 1 -> int
+    
+    desnote --- 3. DP ALGORITHM (Unified) ---
+    eric memo -> int[]
+    
+    eric c = 0 -> int
     eric max_size = 0 -> int
-    eric best_pos = 0 -> int
-    eric i = 0 -> int
-    eric j = 0 -> int
-    desnote fill nums: 1 for empty '.', 0 for obstacle 'o'
-    eric pos = start -> int
-    eric r = 0 -> int
-    aer r in range(0, rows):
-        aer c in range(0, cols):
-            eric ch2 = content[pos] -> char
-            erif (ch2 == desnote\n):
-                desnote skip stray newlines
-                c = c - 1
+    eric max_pos = 0 -> int
+    
+    eric prev = 0 -> int
+    eric temp = 0 -> int
+    eric min_val = 0 -> int
+    eric val_up = 0 -> int
+    eric val_left = 0 -> int
+    eric cur_char -> char
+    
+    eric is_first_line = 1 -> int
+    
+    desnote Reset idx to the start of the map data
+    idx = map_start + 1
+    c = 0
+    prev = 0
+
+    darius (idx < len):
+        cur_char = map_data[idx]
+        
+        erif (cur_char == '\n'):
+            desnote End of line reached
+            is_first_line = 0
+            c = 0
+            prev = 0
+            idx += 1
+        deschelse:
+            temp = memo[c]
+            
+            erif (cur_char == 'o'):
+                memo[c] = 0
             deschelse:
-                erif (ch2 == desnote\o):
-                    nums[r * cols + c] = 0
-                deschelse:
-                    nums[r * cols + c] = 1
-                pos = pos + 1
-    desnote DP: compute largest square using 1D mapping
-    aer r in range(0, rows):
-        aer c in range(0, cols):
-            eric idxn = r * cols + c -> int
-            erif (nums[idxn] == 1):
-                erif (r == 0 || c == 0):
-                    nums[idxn] = 1
-                deschelse:
-                    eric left = nums[r * cols + (c - 1)] -> int
-                    eric up = nums[(r - 1) * cols + c] -> int
-                    eric diag = nums[(r - 1) * cols + (c - 1)] -> int
-                    eric mn = left -> int
-                    erif (up < mn): mn = up
-                    erif (diag < mn): mn = diag
-                    nums[idxn] = mn + 1
-                erif (nums[idxn] > max_size):
-                    max_size = nums[idxn]
-                    best_pos = idxn
-    desnote mark result on a char array and print
-    eric out -> string[]
-    desnote initialize out lines from content
-    eric line_start = start -> int
-    aer r in range(0, rows):
-        eric line = "" -> string
-        aer c in range(0, cols):
-            eric ch3 = content[line_start] -> char
-            line = line + ch3
-            line_start = line_start + 1
-        out[r] = line
-        desnote skip newline
-        line_start = line_start + 1
-    eric srow = best_pos / cols -> int
-    eric scol = best_pos % cols -> int
-    eric sr = srow - max_size + 1 -> int
-    eric sc = scol - max_size + 1 -> int
-    aer rr in range(sr, sr + max_size):
-        aer cc in range(sc, sc + max_size):
-            eric linev = out[rr] -> string
-            desnote replace char at cc with 'x'
-            linev = linev[0:cc] + "x" + linev[cc + 1:]
-            out[rr] = linev
-    aer r in range(0, rows):
-        peric(out[r])
+                erif (cur_char == '.'):
+                    erif (is_first_line == 1):
+                        desnote Logic for the first line
+                        memo[c] = 1
+                    deschelse:
+                        desnote Logic for subsequent lines
+                        val_up = memo[c]
+                        
+                        erif (c == 0):
+                            val_left = 0
+                        deschelse:
+                            eric c_minus_1 = c - 1 -> int
+                            val_left = memo[c_minus_1]
+                        
+                        min_val = val_up
+                        erif (val_left < min_val):
+                            min_val = val_left
+                        erif (prev < min_val):
+                            min_val = prev
+                            
+                        memo[c] = min_val + 1
+                    
+                    desnote Update Max
+                    erif (memo[c] > max_size):
+                        max_size = memo[c]
+                        max_pos = idx
+            
+            prev = temp
+            c += 1
+            idx += 1
+    
+    desnote Fill X
+    eric k = 0 -> int
+    eric l = 0 -> int
+    eric pos = 0 -> int
+    eric top_left = 0 -> int
+    eric offset = 0 -> int
+    eric row_offset = 0 -> int
+    
+    offset = (max_size - 1) * map_width + (max_size - 1)
+    top_left = max_pos - offset
+    
+    k = 0
+    darius (k < max_size):
+        l = 0
+        darius (l < max_size):
+             row_offset = k * map_width
+             pos = top_left + row_offset
+             pos = pos + l
+             map_data[pos] = 'x'
+             l += 1
+        k += 1
+        
+    eric tmp = "" -> string
+    aer i in range(2, len):
+        tmp[i - 2] = map_data[i]
+
+    peric("Result:\n{tmp}")
     deschodt 0

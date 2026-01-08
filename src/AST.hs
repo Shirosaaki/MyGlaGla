@@ -178,7 +178,7 @@ sexprToAST (SList [SSymbol "=", target, value]) =
 -- array access: (index arr idx)
 sexprToAST (SList [SSymbol "index", arr, idx]) =
     case (sexprToAST arr, sexprToAST idx) of
-        (Right a, Right i) -> Right (ArrayAccess a i)
+        (Right a, Right i) -> Right (Call (AstSymbol "array-access") [a, i])
         (Left e, _) -> Left e
         (_, Left e) -> Left e
 
