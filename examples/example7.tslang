@@ -6,9 +6,10 @@ Deschodt Eric() -> int
 
     peric("Bonjour {nom}, tu as {age} ans.")
     darius (nom[i] != '\0'):
-        peric("{nom[i]}")
         erif (nom[i] == '\n'):
             n += 1
+        deschelse:
+            peric("{nom[i]}")
         i += 1
     peric("Ton nom contient {i} caractères et {n} sauts de ligne.")
     deschodt 0
