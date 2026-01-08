@@ -81,6 +81,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Run unit tests (make run_test)
+        if: 1 == 1
         run: |
           # Run the project's unit test target. This step will fail the job
           # if tests fail (non-zero exit code).
