@@ -1,6 +1,5 @@
 * [📘 Introduction](./README.md)
 * [📖 User Guide](./user_guide.md)
-* [📝 TSL Language Reference](./tsl_language_reference.md)
 * [💡 Tutorials](./TSL/hello_world.md)
   * [Hello World](./TSL/hello_world.md)
   * [Variables](./TSL/variable.md)
@@ -12,3 +11,5 @@
   * [Enums](./TSL/enums.md)
   * [Pointers](./TSL/pointers.md)
   * [Read & Write](./TSL/read-write.md)
+* [🔧 Technical Documentation](./TECHNICAL.md)
+* [🤝 Contributing Guide](./CONTRIBUTING.md)
