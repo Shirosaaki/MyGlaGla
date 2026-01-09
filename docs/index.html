@@ -7,6 +7,123 @@
   <meta name="description" content="Description">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
   <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify@4/lib/themes/vue.css">
+  <link 
+    rel="stylesheet" 
+    href="//cdn.jsdelivr.net/npm/docsify-darklight-theme@latest/dist/style.min.css"
+    title="docsify-darklight-theme"
+    type="text/css"
+  />
+  <style>
+    /* Custom styles for accessibility controls */
+    #accessibility-controls {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 999;
+      background: var(--background, #fff);
+      border: 1px solid var(--border-color, #ccc);
+      padding: 12px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      max-width: 280px;
+    }
+    
+    #accessibility-toggle {
+      cursor: pointer;
+      padding: 8px 12px;
+      border: 1px solid var(--border-color, #ccc);
+      background: var(--accent, #42b983);
+      color: #fff;
+      border-radius: 4px;
+      font-weight: bold;
+      width: 100%;
+      font-size: 14px;
+    }
+    
+    #accessibility-panel {
+      margin-top: 10px;
+      display: none;
+    }
+    
+    #accessibility-panel.open {
+      display: block;
+    }
+    
+    .control-group {
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border-color, #eee);
+    }
+    
+    .control-group:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+    }
+    
+    .control-group label {
+      display: block;
+      font-size: 12px;
+      font-weight: bold;
+      margin-bottom: 5px;
+      color: var(--text-color, #333);
+    }
+    
+    .button-row {
+      display: flex;
+      gap: 5px;
+      flex-wrap: wrap;
+    }
+    
+    #accessibility-controls button {
+      cursor: pointer;
+      padding: 6px 10px;
+      border: 1px solid var(--border-color, #ccc);
+      background: var(--code-background-color, #f8f8f8);
+      color: var(--text-color, #333);
+      border-radius: 4px;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+    
+    #accessibility-controls button:hover {
+      background: var(--accent, #42b983);
+      color: #fff;
+      transform: translateY(-1px);
+    }
+    
+    #accessibility-controls input[type="color"] {
+      width: 60px;
+      height: 32px;
+      border: 1px solid var(--border-color, #ccc);
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    
+    #accessibility-controls input[type="range"] {
+      width: 100%;
+      margin: 5px 0;
+    }
+    
+    .color-presets {
+      display: flex;
+      gap: 5px;
+      margin-top: 5px;
+    }
+    
+    .color-preset {
+      width: 30px;
+      height: 30px;
+      border-radius: 4px;
+      cursor: pointer;
+      border: 2px solid var(--border-color, #ccc);
+      transition: transform 0.2s;
+    }
+    
+    .color-preset:hover {
+      transform: scale(1.1);
+      border-color: var(--accent, #42b983);
+    }
+  </style>
 </head>
 <body>
   <div id="app"></div>
@@ -14,10 +131,219 @@
     window.$docsify = {
       name: 'GLADOS',
       repo: '',
-      loadNavbar: true
+      loadNavbar: true,
+      darklightTheme: {
+        siteFont : "PT Sans",
+        defaultTheme : 'dark',
+        codeFontFamily : 'Roboto Mono, Monaco, courier, monospace',
+        bodyFontSize : '17px',
+        dark: {
+          accent: '#42b983',
+          toogleBackground : '#ffffff',
+          background: '#091a28',
+          textColor: '#b4b4b4',
+          codeTextColor : '#ffffff',
+          codeBackgroundColor : '#0e2233',
+          borderColor : '#0d2538',
+          blockQuoteColour : '#858585',
+          highlightColor : '#d22778',
+          sidebarSublink : '#b4b4b4',
+          codeTypeColor : '#ffffff',
+          coverBackground : 'linear-gradient(to left bottom, hsl(118, 100%, 85%) 0%,hsl(147, 100%, 85%) 100%)',
+          toogleImage : 'url(https://cdn.jsdelivr.net/npm/docsify-darklight-theme@latest/icons/sun.svg)'
+        },
+        light: {
+          accent: '#42b983',
+          toogleBackground : '#091a28',
+          background: '#ffffff',
+          textColor: '#34495e',
+          codeTextColor : '#525252',
+          codeBackgroundColor : '#f8f8f8',
+          borderColor : 'rgba(0, 0, 0, 0.07)',
+          blockQuoteColour : '#858585',
+          highlightColor : '#d22778',
+          sidebarSublink : '#505d6b',
+          codeTypeColor : '#091a28',
+          coverBackground : 'linear-gradient(to left bottom, hsl(118, 100%, 85%) 0%,hsl(147, 100%, 85%) 100%)',
+          toogleImage : 'url(https://cdn.jsdelivr.net/npm/docsify-darklight-theme@latest/icons/moon.svg)'
+        }
+      },
+      plugins: [
+        function(hook, vm) {
+          hook.doneEach(function() {
+            if (!document.getElementById('accessibility-controls')) {
+              var div = document.createElement('div');
+              div.id = 'accessibility-controls';
+              
+              // Toggle button
+              var toggleBtn = document.createElement('button');
+              toggleBtn.id = 'accessibility-toggle';
+              toggleBtn.innerText = '⚙️ Accessibility Settings';
+              toggleBtn.onclick = function() {
+                var panel = document.getElementById('accessibility-panel');
+                panel.classList.toggle('open');
+              };
+              
+              // Control panel
+              var panel = document.createElement('div');
+              panel.id = 'accessibility-panel';
+              
+              // Font size controls
+              var fontGroup = document.createElement('div');
+              fontGroup.className = 'control-group';
+              fontGroup.innerHTML = '<label>Font Size</label>';
+              
+              var fontRow = document.createElement('div');
+              fontRow.className = 'button-row';
+              
+              var btnDec = document.createElement('button');
+              btnDec.innerText = 'A-';
+              btnDec.setAttribute('aria-label', 'Decrease font size');
+              btnDec.onclick = function() { 
+                var body = document.body;
+                var style = window.getComputedStyle(body, null).getPropertyValue('font-size');
+                var currentSize = parseFloat(style);
+                body.style.fontSize = (currentSize - 2) + 'px';
+                localStorage.setItem('fontSize', (currentSize - 2) + 'px');
+              };
+
+              var btnReset = document.createElement('button');
+              btnReset.innerText = 'Reset';
+              btnReset.setAttribute('aria-label', 'Reset font size');
+              btnReset.onclick = function() { 
+                document.body.style.fontSize = ''; 
+                document.body.style.color = '';
+                document.body.style.filter = '';
+                localStorage.removeItem('fontSize');
+                localStorage.removeItem('textColor');
+                localStorage.removeItem('contrast');
+              };
+
+              var btnInc = document.createElement('button');
+              btnInc.innerText = 'A+';
+              btnInc.setAttribute('aria-label', 'Increase font size');
+              btnInc.onclick = function() { 
+                 var body = document.body;
+                 var style = window.getComputedStyle(body, null).getPropertyValue('font-size');
+                 var currentSize = parseFloat(style);
+                 body.style.fontSize = (currentSize + 2) + 'px';
+                 localStorage.setItem('fontSize', (currentSize + 2) + 'px');
+              };
+
+              fontRow.appendChild(btnDec);
+              fontRow.appendChild(btnReset);
+              fontRow.appendChild(btnInc);
+              fontGroup.appendChild(fontRow);
+              
+              // Text color controls
+              var colorGroup = document.createElement('div');
+              colorGroup.className = 'control-group';
+              colorGroup.innerHTML = '<label>Text Color</label>';
+              
+              var colorRow = document.createElement('div');
+              colorRow.className = 'button-row';
+              
+              var colorPicker = document.createElement('input');
+              colorPicker.type = 'color';
+              colorPicker.id = 'text-color-picker';
+              colorPicker.setAttribute('aria-label', 'Pick text color');
+              colorPicker.onchange = function() {
+                document.body.style.color = this.value;
+                localStorage.setItem('textColor', this.value);
+              };
+              
+              colorRow.appendChild(colorPicker);
+              colorGroup.appendChild(colorRow);
+              
+              // Color presets
+              var presetRow = document.createElement('div');
+              presetRow.className = 'color-presets';
+              
+              var presets = [
+                { color: '#000000', label: 'Black' },
+                { color: '#FFFFFF', label: 'White' },
+                { color: '#0000FF', label: 'Blue' },
+                { color: '#FF0000', label: 'Red' },
+                { color: '#00FF00', label: 'Green' },
+                { color: '#FFFF00', label: 'Yellow' }
+              ];
+              
+              presets.forEach(function(preset) {
+                var presetBtn = document.createElement('div');
+                presetBtn.className = 'color-preset';
+                presetBtn.style.backgroundColor = preset.color;
+                presetBtn.title = preset.label;
+                presetBtn.setAttribute('aria-label', 'Set text color to ' + preset.label);
+                presetBtn.onclick = function() {
+                  document.body.style.color = preset.color;
+                  colorPicker.value = preset.color;
+                  localStorage.setItem('textColor', preset.color);
+                };
+                presetRow.appendChild(presetBtn);
+              });
+              
+              colorGroup.appendChild(presetRow);
+              
+              // Contrast controls
+              var contrastGroup = document.createElement('div');
+              contrastGroup.className = 'control-group';
+              contrastGroup.innerHTML = '<label>Contrast: <span id="contrast-value">100%</span></label>';
+              
+              var contrastSlider = document.createElement('input');
+              contrastSlider.type = 'range';
+              contrastSlider.min = '50';
+              contrastSlider.max = '200';
+              contrastSlider.value = '100';
+              contrastSlider.id = 'contrast-slider';
+              contrastSlider.setAttribute('aria-label', 'Adjust contrast');
+              contrastSlider.oninput = function() {
+                var value = this.value;
+                document.getElementById('contrast-value').innerText = value + '%';
+                document.body.style.filter = 'contrast(' + (value / 100) + ')';
+                localStorage.setItem('contrast', value);
+              };
+              
+              contrastGroup.appendChild(contrastSlider);
+              
+              // Assemble panel
+              panel.appendChild(fontGroup);
+              panel.appendChild(colorGroup);
+              panel.appendChild(contrastGroup);
+              
+              div.appendChild(toggleBtn);
+              div.appendChild(panel);
+              document.body.appendChild(div);
+              
+              // Restore saved settings
+              var savedFontSize = localStorage.getItem('fontSize');
+              if (savedFontSize) {
+                document.body.style.fontSize = savedFontSize;
+              }
+              
+              var savedColor = localStorage.getItem('textColor');
+              if (savedColor) {
+                document.body.style.color = savedColor;
+                colorPicker.value = savedColor;
+              }
+              
+              var savedContrast = localStorage.getItem('contrast');
+              if (savedContrast) {
+                document.body.style.filter = 'contrast(' + (savedContrast / 100) + ')';
+                contrastSlider.value = savedContrast;
+                document.getElementById('contrast-value').innerText = savedContrast + '%';
+              }
+            }
+          });
+        }
+      ]
     }
   </script>
   <!-- Docsify v4 -->
   <script src="//cdn.jsdelivr.net/npm/docsify@4"></script>
+  <!-- Docsify Darklight Theme -->
+  <script 
+    src="//cdn.jsdelivr.net/npm/docsify-darklight-theme@latest/dist/index.min.js"
+    type="text/javascript">
+  </script>
 </body>
 </html>
