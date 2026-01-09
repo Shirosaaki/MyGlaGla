@@ -3,17 +3,17 @@ Deschodt Eric() -> int
     nu[0] -> int[]
     nu[0][0] = 1
     nu[0][1] = 2
-    nu[0][20] = 3
-    nu[0][30] = 4
-    nu[9] -> int[]
-    nu[9][0] = 10
-    nu[9][1] = 11
-    nu[9][30] = 12
-    nu[10] -> int[]
-    nu[10][0] = 5
-    nu[10][0] = 5
-    nu[10][1] = 6
-    nu[10][30] = 7
-    aer i in range(0, 11):
-        aer j in range(0, 31):
+    nu[0][4] = 3
+    nu[0][6] = 4
+    nu[3] -> int[]
+    nu[3][0] = 10
+    nu[3][1] = 11
+    nu[3][6] = 12
+    nu[5] -> int[]
+    nu[5][0] = 5
+    nu[5][0] = 5
+    nu[5][1] = 6
+    nu[5][6] = 7
+    aer i in range(0, 6):
+        aer j in range(0, 7):
             peric("nu[{i}][{j}] = {nu[i][j]}")

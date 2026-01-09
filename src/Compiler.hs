@@ -17,10 +17,10 @@ import System.IO.Unsafe (unsafePerformIO)
 -- =============================================================================
 
 builtIns :: [String]
-builtIns = ["renaud", "romaric", "marvin", "str_concat", "+", "-", "*", "/", "%", "==", "<", ">", "<=", ">=", "!=", "assign", "define", "array-type", "array-access", "string-interp", "for"]
+builtIns = ["renaud", "romaric", "marvin", "str_concat", "+", "-", "*", "/", "%", "==", "<", ">", "<=", ">=", "!=", "assign", "define", "array-type", "array-access", "array-decl", "string-interp", "for"]
 
 -- =============================================================================
--- LLVM Stubs (Required for Export)
+-- LLVM Stubs
 -- =============================================================================
 
 compileModuleLLVM :: Ast -> String
@@ -44,7 +44,6 @@ collectVarTypes (Assign n (AstString _)) _ = Map.singleton n TString
 collectVarTypes (Assign n (Call (AstSymbol f) _)) _ 
     | f `elem` ["renaud", "romaric", "str_concat", "+"] = Map.singleton n TString
     | otherwise = Map.empty
--- Mark arrays explicitly as array types
 collectVarTypes (Call (AstSymbol "define") [AstSymbol n, Call (AstSymbol "array-type") _]) _ = 
     Map.singleton n (TCustom "int[]")
 collectVarTypes (Call (AstSymbol "for") [AstSymbol v, _, _, body]) structs = 
@@ -84,13 +83,79 @@ buildLocalMap ast vt =
         calc [] _ acc = acc
         calc (n:ns) cur acc = 
             let isArray = Map.lookup n vt == Just (TCustom "int[]")
-                -- Allocate large space for arrays (4096 bytes = 512 ints), small for others.
-                -- Keep legacy check for 'memo' just in case, but rely on type mostly.
                 sz = if n == "memo" then 1000000 
                      else if isArray then 4096 
                      else 8
             in calc ns (cur + sz) (Map.insert n (cur + sz) acc)
     in calc names 8 Map.empty
+
+-- =============================================================================
+-- Global Constant Inlining
+-- =============================================================================
+
+collectGlobalConsts :: Ast -> Map.Map String Ast
+collectGlobalConsts = go
+    where
+        go (Block xs) = Map.unions (map go xs)
+        go (AstList xs) = Map.unions (map go xs)
+        go (Define _ _ (AstLambda _ _)) = Map.empty
+        go (Define n _ v) | isLit v = Map.singleton n v
+        go _ = Map.empty
+
+        isLit (AstInt _) = True
+        isLit (AstChar _) = True
+        isLit (AstBool _) = True
+        isLit _ = False
+
+inlineGlobalConsts :: Map.Map String Ast -> Ast -> Ast
+inlineGlobalConsts consts = goAst 0 Set.empty
+    where
+        goAst :: Int -> Set.Set String -> Ast -> Ast
+        goAst depth shadowed ast0 = case ast0 of
+            AstSymbol s ->
+                if Set.member s shadowed
+                then AstSymbol s
+                else Map.findWithDefault (AstSymbol s) s consts
+            
+            AstList xs -> AstList (map (goAst depth shadowed) xs)
+            Block xs -> Block (goBlock depth shadowed xs)
+            
+            Call f args -> Call (goAst depth shadowed f) (map (goAst depth shadowed) args)
+            Assign n v -> Assign n (goAst depth shadowed v)
+            
+            Return v -> Return (goAst depth shadowed v)
+            IfElse c t e -> IfElse (goAst depth shadowed c) (goAst depth shadowed t) (goAst depth shadowed e)
+            While c b -> While (goAst depth shadowed c) (goAst depth shadowed b)
+            
+            -- Handle For loop variable shadowing
+            For v coll body -> 
+                 let shadowed' = Set.insert v shadowed
+                 in For v (goAst depth shadowed coll) (goAst (depth+1) shadowed' body)
+            Call (AstSymbol "for") [AstSymbol v, s, e, body] ->
+                 let shadowed' = Set.insert v shadowed
+                 in Call (AstSymbol "for") [AstSymbol v, goAst depth shadowed s, goAst depth shadowed e, goAst (depth+1) shadowed' body]
+
+            Define n t (AstLambda params body) ->
+                let shadowed' = Set.union shadowed (Set.fromList params)
+                in Define n t (AstLambda params (goAst (depth + 1) shadowed' body))
+            Define n t v -> Define n t (goAst depth shadowed v)
+            AstLambda params body ->
+                let shadowed' = Set.union shadowed (Set.fromList params)
+                in AstLambda params (goAst (depth + 1) shadowed' body)
+            
+            _ -> ast0
+
+        goBlock :: Int -> Set.Set String -> [Ast] -> [Ast]
+        goBlock depth shadowed [] = []
+        goBlock depth shadowed (stmt:rest) =
+             let stmt' = goAst depth shadowed stmt
+                 -- Inside functions (depth > 0), local variables shadow globals
+                 shadowed' = if depth > 0 
+                             then case stmt of 
+                                    Define n _ _ -> Set.insert n shadowed
+                                    _ -> shadowed
+                             else shadowed
+             in stmt' : goBlock depth shadowed' rest
 
 -- =============================================================================
 -- ASM Emission
@@ -113,82 +178,13 @@ compileToObject out ast = catch (do
 
 emitASM :: Ast -> String
 emitASM ast =
+    -- >>> FIX: Inline global constants first <<<
     let ast' = inlineGlobalConsts (collectGlobalConsts ast) ast
         varTypes = collectVarTypes ast' Map.empty
         funcNames = collectFunctionNames ast'
         strs = uniqueList (collectStrings ast' varTypes)
         labels = zip strs [0..]
     in concatMap (emitData) labels ++ "\n" ++ emitText ast' labels varTypes funcNames ++ "\n" ++ builtInFunctions
-
-collectGlobalConsts :: Ast -> Map.Map String Ast
-collectGlobalConsts = go
-    where
-        go (Block xs) = Map.unions (map go xs)
-        go (Define _ _ (AstLambda _ _)) = Map.empty
-        go (Define n _ v) | isLit v = Map.singleton n v
-        go _ = Map.empty
-
-        isLit (AstInt _) = True
-        isLit (AstChar _) = True
-        isLit _ = False
-
-inlineGlobalConsts :: Map.Map String Ast -> Ast -> Ast
-inlineGlobalConsts consts = goAst 0 Set.empty
-    where
-        goAst :: Int -> Set.Set String -> Ast -> Ast
-        goAst depth shadowed ast0 = case ast0 of
-            AstSymbol s ->
-                if Set.member s shadowed
-                then AstSymbol s
-                else Map.findWithDefault (AstSymbol s) s consts
-
-            AstList xs -> AstList (map (goAst depth shadowed) xs)
-            Block xs -> Block (goBlock depth shadowed xs)
-            Call (AstSymbol f) args -> Call (AstSymbol f) (map (goAst depth shadowed) args)
-            Call f args -> Call (goAst depth shadowed f) (map (goAst depth shadowed) args)
-            Assign n v -> Assign n (goAst depth shadowed v)
-            ArrayAccess a i -> ArrayAccess (goAst depth shadowed a) (goAst depth shadowed i)
-            ArrayAssign n i v -> ArrayAssign n (goAst depth shadowed i) (goAst depth shadowed v)
-            StructFieldAssign obj field v -> StructFieldAssign obj field (goAst depth shadowed v)
-            Return v -> Return (goAst depth shadowed v)
-            IfElse c t e -> IfElse (goAst depth shadowed c) (goAst depth shadowed t) (goAst depth shadowed e)
-            While c b -> While (goAst depth shadowed c) (goAst depth shadowed b)
-            For v coll body -> For v (goAst depth shadowed coll) (goAst depth shadowed body)
-
-            Define n t (AstLambda params body) ->
-                let shadowed' = Set.union shadowed (Set.fromList params)
-                in Define n t (AstLambda params (goAst (depth + 1) shadowed' body))
-            Define n t v -> Define n t (goAst depth shadowed v)
-            AstLambda params body ->
-                let shadowed' = Set.union shadowed (Set.fromList params)
-                in AstLambda params (goAst (depth + 1) shadowed' body)
-
-            -- nodes that do not contain symbol references we care about
-            Struct n fs -> Struct n fs
-            TypedVar n t v -> TypedVar n t (goAst depth shadowed v)
-            Break -> Break
-            Continue -> Continue
-            AstClosure ps b env -> AstClosure ps b env
-            AstVoid -> AstVoid
-            AstString _ -> ast0
-            AstInt _ -> ast0
-            AstFloat _ -> ast0
-            AstBool _ -> ast0
-            AstChar _ -> ast0
-
-        -- Only treat local bindings as shadowing once we're inside a function/lambda.
-        goBlock :: Int -> Set.Set String -> [Ast] -> [Ast]
-        goBlock depth shadowed xs
-            | depth == 0 = map (goAst depth shadowed) xs
-            | otherwise = goSeq shadowed xs
-            where
-                goSeq _ [] = []
-                goSeq sh (stmt:rest) =
-                    let stmt' = goAst depth sh stmt
-                        sh' = case stmt of
-                            Define n _ _ -> Set.insert n sh
-                            _ -> sh
-                    in stmt' : goSeq sh' rest
 
 emitData :: (String, Int) -> String
 emitData (s, i) = ".globl LC" ++ show i ++ "\nLC" ++ show i ++ ": .string \"" ++ escapeASM s ++ "\"\n"
@@ -211,7 +207,6 @@ emitText (Block asts) labels globalVt funcNames =
                      else stmts
                      
         mainAST = Block finalStmts
-        -- Collect local variable types for main block
         localVt = collectVarTypes mainAST globalVt
         localMap = buildLocalMap mainAST localVt
         
@@ -219,10 +214,15 @@ emitText (Block asts) labels globalVt funcNames =
         allocSize = ((maxOffset + 31) `div` 16) * 16
         prologue = [".text", ".globl main", "main:", "\tpushq %rbp", "\tmovq %rsp, %rbp", "\tsubq $" ++ show allocSize ++ ", %rsp"]
         
-        -- Clear memory for arrays to be safe
-        clearMem = concatMap (\(n, sz) -> case Map.lookup n localMap of
-            Just off -> ["\tmovq $" ++ show ((sz :: Int) `div` 8) ++ ", %rcx", "\txorq %rax, %rax", "\tleaq -" ++ show off ++ "(%rbp), %rdi", "\trep stosq"]
-            Nothing -> []) [("nums", 808), ("memo", 1000000)]
+        clearMem = concatMap (\(n, off) -> 
+            let isArray = Map.lookup n localVt == Just (TCustom "int[]")
+                sz = if n == "memo" then 1000000 
+                     else if isArray then 4096 
+                     else 0
+            in if sz > 0
+               then ["\tmovq $" ++ show (sz `div` 8) ++ ", %rcx", "\txorq %rax, %rax", "\tleaq -" ++ show off ++ "(%rbp), %rdi", "\trep stosq"]
+               else []
+            ) (Map.toList localMap)
             
         (_, body, _) = emitStmts mainAST 0 labels localMap ".Lreturn" Nothing Nothing localVt Map.empty funcNames
         epilogue = [".Lreturn:", "\taddq $" ++ show allocSize ++ ", %rsp", "\tpopq %rbp", "\tret"]
@@ -239,21 +239,9 @@ partitionDefines (x:xs) =
 
 emitFunc :: [(String, Int)] -> Map.Map String Type -> [String] -> Ast -> String
 emitFunc labels globalVt funcNames (Define name _ (AstLambda params body)) =
-    let -- Gather all local types
-        localVt = collectVarTypes body globalVt
+    let localVt = collectVarTypes body globalVt
         allNames = uniqueList (params ++ collectNamesForLocals body)
         
-        -- Pass localVt to buildLocalMap to ensure arrays get proper size
-        localMap = buildLocalMap (Block [Define n Nothing AstVoid | n <- allNames]) localVt
-        -- Note: buildLocalMap iterates ast names. We construct a dummy AST to reuse logic or just pass body if it contained all names.
-        -- Better: buildLocalMap using the body + params
-        
-        -- Actually, buildLocalMap expects AST to find names.
-        -- Let's use 'body' to find locals, and manually add params if missing.
-        -- But wait, buildLocalMap does 'collectNamesForLocals'.
-        -- We need to ensure param names are in the map too.
-        
-        -- Re-implement map building specifically for function to be safe:
         calc [] _ acc = acc
         calc (n:ns) cur acc = 
             let isArray = Map.lookup n localVt == Just (TCustom "int[]")
@@ -263,20 +251,31 @@ emitFunc labels globalVt funcNames (Define name _ (AstLambda params body)) =
             in calc ns (cur + sz) (Map.insert n (cur + sz) acc)
             
         finalMap = calc allNames 8 Map.empty
-        
         maxOffset = if Map.null finalMap then 8 else maximum (Map.elems finalMap)
         allocSize = ((maxOffset + 31) `div` 16) * 16
         prologue = [name ++ ":", "\tpushq %rbp", "\tmovq %rsp, %rbp", "\tsubq $" ++ show allocSize ++ ", %rsp"]
+        
+        clearMem = concatMap (\(n, off) -> 
+            let isArray = Map.lookup n localVt == Just (TCustom "int[]")
+                sz = if n == "memo" then 1000000 
+                     else if isArray then 4096 
+                     else 0
+            in if sz > 0
+               then ["\tmovq $" ++ show (sz `div` 8) ++ ", %rcx", "\txorq %rax, %rax", "\tleaq -" ++ show off ++ "(%rbp), %rdi", "\trep stosq"]
+               else []
+            ) (Map.toList finalMap)
+
         paramRegs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"]
         paramMoves = concat $ zipWith (\p r -> 
             case Map.lookup p finalMap of
                 Just off -> ["\tmovq " ++ r ++ ", -" ++ show off ++ "(%rbp)"]
                 Nothing -> []
             ) params paramRegs
+            
         retLabel = ".Lret_" ++ name
         (_, bStmts, _) = emitStmts body 0 labels finalMap retLabel Nothing Nothing localVt Map.empty funcNames
         epilogue = [retLabel ++ ":", "\tleave", "\tret"]
-    in unlines (prologue ++ paramMoves ++ map ("\t" ++) bStmts ++ epilogue)
+    in unlines (prologue ++ clearMem ++ paramMoves ++ map ("\t" ++) bStmts ++ epilogue)
 emitFunc _ _ _ _ = ""
 
 -- =============================================================================
@@ -288,10 +287,15 @@ exprToASM (AstInt n) _ _ _ _ = ["movq $" ++ show n ++ ", %rax"]
 exprToASM (AstChar c) _ _ _ _ = ["movq $" ++ show (fromEnum c) ++ ", %rax"]
 exprToASM (AstSymbol v) locals labels vt fns
     | " + " `isInfixOf` v = let p = words v in exprToASM (Call (AstSymbol "+") [AstSymbol (p!!0), AstSymbol (p!!2)]) locals labels vt fns
-    | "[" `isInfixOf` v = 
-        let name = takeWhile (/= '[') v
-            idx  = reverse $ takeWhile (/= '[') $ drop 1 $ reverse v
-        in exprToASM (Call (AstSymbol "array-access") [AstSymbol name, AstSymbol idx]) locals labels vt fns
+    | "[" `isInfixOf` v && last v == ']' = 
+        let revV = reverse v
+            dist = length $ takeWhile (/= '[') revV
+            splitPos = length v - 1 - dist
+            (base, rest) = splitAt splitPos v
+            idxStr = init (drop 1 rest)
+            isAllDigits s = not (null s) && all (\c -> c >= '0' && c <= '9') s
+            idxAst = if isAllDigits idxStr then AstInt (read idxStr) else AstSymbol idxStr
+        in exprToASM (Call (AstSymbol "array-access") [AstSymbol base, idxAst]) locals labels vt fns
     | otherwise = case Map.lookup v locals of
         Just off -> 
             case Map.lookup v vt of
@@ -314,25 +318,35 @@ exprToASM (Call (AstSymbol "/") [lhs, rhs]) locals labels vt fns =
     exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt fns ++ ["movq %rax, %rcx", "popq %rax", "cqo", "idivq %rcx"]
 exprToASM (Call (AstSymbol "%") [lhs, rhs]) locals labels vt fns =
     exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt fns ++ ["movq %rax, %rcx", "popq %rax", "cqo", "idivq %rcx", "movq %rdx, %rax"]
-exprToASM (Call (AstSymbol "array-access") [AstSymbol name, idxExpr]) locals labels vt fns =
-    let off = case Map.lookup name locals of
-                Just o -> o
-                Nothing -> unsafePerformIO $ do
-                    printError ("Compilation Error: Undefined array/variable '" ++ name ++ "'")
-                    exitFailure
-        isString = Map.lookup name vt == Just TString
-        isArray = Map.lookup name vt == Just (TCustom "int[]")
-    in if isString
-       then exprToASM idxExpr locals labels vt fns ++ ["movq %rax, %rcx", "movq -" ++ show off ++ "(%rbp), %rdx", "addq %rcx, %rdx", "movzbq (%rdx), %rax"]
-       else exprToASM idxExpr locals labels vt fns ++ ["pushq %rax"] ++ 
-            (if isArray then ["leaq -" ++ show off ++ "(%rbp), %rdx"] else ["movq -" ++ show off ++ "(%rbp), %rdx"]) ++
-            ["popq %rcx", "movq (%rdx, %rcx, 8), %rax"]
+exprToASM (Call (AstSymbol "array-access") [baseExpr, idxExpr]) locals labels vt fns =
+    case baseExpr of
+        AstSymbol name | not ("[" `isInfixOf` name) ->
+            let off = case Map.lookup name locals of
+                        Just o -> o
+                        Nothing -> unsafePerformIO $ do
+                            printError ("Compilation Error: Undefined array/variable '" ++ name ++ "'")
+                            exitFailure
+                isString = Map.lookup name vt == Just TString
+                isArray = Map.lookup name vt == Just (TCustom "int[]")
+            in if isString
+               then exprToASM idxExpr locals labels vt fns ++ ["movq %rax, %rcx", "movq -" ++ show off ++ "(%rbp), %rdx", "addq %rcx, %rdx", "movzbq (%rdx), %rax"]
+               else exprToASM idxExpr locals labels vt fns ++ ["pushq %rax"] ++ 
+                    (if isArray then ["leaq -" ++ show off ++ "(%rbp), %rdx"] else ["movq -" ++ show off ++ "(%rbp), %rdx"]) ++
+                    ["popq %rcx"] ++
+                    ["movq (%rdx, %rcx, 8), %rax"]
+        _ ->
+            exprToASM baseExpr locals labels vt fns ++ 
+            ["cmpq $0, %rax", "je 1f", "pushq %rax"] ++ 
+            exprToASM idxExpr locals labels vt fns ++ 
+            ["movq %rax, %rcx", "popq %rdx", "movq (%rdx, %rcx, 8), %rax", "jmp 2f", "1:", "movq $0, %rax", "2:"]
+
 exprToASM (Call (AstSymbol op) [lhs, rhs]) locals labels vt fns
     | op `elem` ["<", "==", ">", "<=", ">=", "!="] = 
         let instr = case op of { "<" -> "setl"; "==" -> "sete"; ">" -> "setg"; "<=" -> "setle"; ">=" -> "setge"; "!=" -> "setne"; _ -> "sete" }
         in exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt fns ++ ["movq %rax, %rdx", "popq %rax", "cmpq %rdx, %rax", instr ++ " %al", "movzbq %al, %rax"]
 exprToASM (Call (AstSymbol func) args) locals labels vt fns
     | "[" `isInfixOf` func = exprToASM (AstSymbol func) locals labels vt fns
+    | func == "array-type" = ["xorq %rax, %rax"]
     | Map.member func locals && null args = exprToASM (AstSymbol func) locals labels vt fns
     | func `notElem` builtIns =
         if func `notElem` fns
@@ -375,9 +389,44 @@ stmtToASM (Call (AstSymbol "peric") [Call (AstSymbol "string-interp") pts]) uid 
         fmt = buildFormatString vt flat ++ "\n"
         fmtIdx = maybe 0 id (lookup fmt labels)
         args = [p | p <- flat, not (isStringNode p)]
+        needsPadding = odd (length args)
+        paddingPush = if needsPadding then ["pushq $0"] else []
+        paddingPop = if needsPadding then ["addq $8, %rsp"] else []
         evals = concatMap (\p -> exprToASM p locals labels vt fns ++ ["pushq %rax"]) args
         loads = concat $ reverse $ zipWith (\_ r -> ["popq " ++ r]) args ["%rsi", "%rdx", "%rcx", "%r8", "%r9"]
-    in (uid, evals ++ loads ++ ["leaq LC" ++ show fmtIdx ++ "(%rip), %rdi", "movb $0, %al", "call printf"], li)
+    in (uid, paddingPush ++ evals ++ loads ++ paddingPop ++ ["leaq LC" ++ show fmtIdx ++ "(%rip), %rdi", "movb $0, %al", "call printf"], li)
+stmtToASM (Call (AstSymbol "assign") [Call (AstSymbol "array-access") [baseExpr, i], v]) uid labels locals _ _ _ vt li fns
+    | not (isSimpleSymbol baseExpr) =
+    let key = getLiKey baseExpr
+        fillInstrs = case (key, i) of
+            (Just k, AstInt idx) -> case Map.lookup k li of
+                Just lastK | idx > lastK + 1 -> 
+                    let fillStart = lastK + 1
+                        fillEnd = idx - 1
+                        baseAsm = exprToASM baseExpr locals labels vt fns 
+                        fillCode = baseAsm ++ 
+                                   ["pushq %rax"] ++
+                                   ["movq " ++ show (lastK * 8) ++ "(%rax), %rax"] ++
+                                   ["popq %rdx"] ++
+                                   concatMap (\currIdx -> ["movq %rax, " ++ show (currIdx * 8) ++ "(%rdx)"]) [fillStart..fillEnd]
+                    in fillCode
+                _ -> []
+            _ -> []
+        newLi = case (key, i) of
+            (Just k, AstInt idx) -> Map.insert k idx li
+            _ -> li
+        instrs = exprToASM baseExpr locals labels vt fns ++ ["pushq %rax"] ++
+                 exprToASM i locals labels vt fns ++ ["pushq %rax"] ++
+                 exprToASM v locals labels vt fns ++ 
+                 ["pushq %rax"] ++
+                 ["popq %rdx"] ++
+                 ["popq %r8"] ++
+                 ["popq %rcx"] ++
+                 ["movq %rdx, (%rcx, %r8, 8)"]
+    in (uid, fillInstrs ++ instrs, newLi)
+  where
+    isSimpleSymbol (AstSymbol _) = True
+    isSimpleSymbol _ = False
 stmtToASM (Call (AstSymbol "assign") [Call (AstSymbol "array-access") [AstSymbol n, i], v]) uid labels locals _ _ _ vt li fns =
     let off = case Map.lookup n locals of
                 Just o -> o
@@ -391,8 +440,8 @@ stmtToASM (Call (AstSymbol "assign") [Call (AstSymbol "array-access") [AstSymbol
                  else exprToASM i locals labels vt fns ++ ["pushq %rax"] ++ 
                       exprToASM v locals labels vt fns ++ ["pushq %rax"] ++
                       (if isArray then ["leaq -" ++ show off ++ "(%rbp), %rcx"] else ["movq -" ++ show off ++ "(%rbp), %rcx"]) ++
-                      ["popq %rdx"] ++ -- Value
-                      ["popq %r8"]  ++ -- Index
+                      ["popq %rdx"] ++ 
+                      ["popq %r8"]  ++ 
                       ["movq %rdx, (%rcx, %r8, 8)"]
         fillInstrs = case i of
             AstInt k -> case Map.lookup n li of
@@ -442,7 +491,18 @@ stmtToASM Continue uid _ _ _ _ _ _ li _ = (uid, [], li)
 stmtToASM (Block xs) uid l loc ret ls le vt li fns = handleBrokenNodes xs uid l loc ret ls le vt li fns
 stmtToASM (AstList xs) uid l loc ret ls le vt li fns = handleBrokenNodes xs uid l loc ret ls le vt li fns
 stmtToASM (Struct _ _) uid _ _ _ _ _ _ li _ = (uid, [], li)
+stmtToASM (Call (AstSymbol "array-decl") [baseExpr, idxExpr, _]) uid labels locals _ _ _ vt li fns =
+    let baseAsm = exprToASM baseExpr locals labels vt fns
+        idxAsm  = exprToASM idxExpr locals labels vt fns
+        alloc   = ["movq $512, %rdi", "movq $8, %rsi", "call calloc"]
+        store   = ["movq %rax, (%rcx, %rdx, 8)"]
+        instrs  = baseAsm ++ ["pushq %rax"] ++ idxAsm ++ ["movq %rax, %rdx", "popq %rcx"] ++ ["pushq %rcx", "pushq %rdx"] ++ alloc ++ ["popq %rdx", "popq %rcx"] ++ store
+    in (uid, instrs, li)
 stmtToASM a uid l loc _ _ _ vt li fns = (uid, exprToASM a loc l vt fns, li)
+
+-- =============================================================================
+-- Helpers
+-- =============================================================================
 
 emitStmts :: Ast -> Int -> [(String, Int)] -> Map.Map String Int -> String -> Maybe String -> Maybe String -> Map.Map String Type -> Map.Map String Int -> [String] -> (Int, [String], Map.Map String Int)
 emitStmts (Block xs) uid l loc r ls le vt li fns = handleBrokenNodes xs uid l loc r ls le vt li fns
@@ -459,11 +519,6 @@ handleBrokenNodes (x:xs) uid l loc r ls le vt li fns =
     let (uid', s1, li') = stmtToASM x uid l loc r ls le vt li fns
         (uid'', s2, li'') = handleBrokenNodes xs uid' l loc r ls le vt li' fns
     in (uid'', s1 ++ s2, li'')
-
-
--- =============================================================================
--- Helpers
--- =============================================================================
 
 isStringNode :: Ast -> Bool
 isStringNode (AstString _) = True
@@ -519,6 +574,14 @@ collectStrings ast vt = case ast of
     Call _ args -> concatMap (`collectStrings` vt) args
     Struct _ _ -> []
     _ -> []
+
+getLiKey :: Ast -> Maybe String
+getLiKey (AstSymbol s) = Just s
+getLiKey (Call (AstSymbol "array-access") [b, AstInt k]) = 
+    case getLiKey b of
+        Just s -> Just (s ++ "[" ++ show k ++ "]")
+        Nothing -> Nothing
+getLiKey _ = Nothing
 
 uniqueList :: Eq a => [a] -> [a]
 uniqueList = foldl (\acc x -> if x `elem` acc then acc else acc ++ [x]) []
