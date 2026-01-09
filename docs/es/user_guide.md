@@ -59,6 +59,43 @@ desnote print factoriel(5) = 120
 
 ## 📚 Recursos adicionales
 
+## 🎨 Configuración de salida de errores
+
+GLADOS puede personalizar cómo se muestran los errores (prefijo, color, negrita/subrayado) usando un archivo de configuración YAML.
+
+### 1) Crear un archivo de configuración
+
+Crea un archivo llamado `glados.config.yaml` en la raíz del proyecto.
+También puedes usar `GLADOS_CONFIG=/ruta/al/config.yaml` para apuntar a otro archivo.
+
+Ejemplo:
+
+```yaml
+output_mode: console   # console | html
+
+error:
+    prefix: "*** ERROR: "
+    color: "#FF8500"    # nombre (red/green/...) o hex (#RRGGBB)
+    bold: true
+    underline: false
+
+html:
+    font_family: "DejaVu Sans Mono, monospace"
+    font_size: "18px"
+    path: "glados_error.html"
+```
+
+### 2) Modo consola (recomendado)
+
+- `error.color` soporta colores **hex** (`#RRGGBB`). GLADOS usa secuencias ANSI truecolor para que el color sea correcto incluso si el tema del terminal remapea los colores ANSI básicos.
+
+### 3) Modo HTML
+
+Si `output_mode: html`:
+
+- GLADOS genera/sobrescribe `html.path` **una vez por ejecución** (los errores anteriores no se acumulan).
+- GLADOS intenta abrir automáticamente el archivo HTML en el navegador por defecto (Linux: `xdg-open`).
+
 Para obtener información más detallada sobre la sintaxis y las características del lenguaje TSL, consulte la [Referencia del lenguaje TSL](./tsl_language_reference.md). Si tiene preguntas o necesita ayuda adicional, no dude en contactar a la comunidad GLADOS o consultar el repositorio de GitHub del proyecto para problemas y discusiones.
 
 ## ✅ Conclusión

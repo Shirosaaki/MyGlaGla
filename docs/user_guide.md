@@ -60,6 +60,43 @@ desnote print factoriel(5) = 120
 
 ## 📚 Additional Resources
 
+## 🎨 Error Output Configuration
+
+GLADOS can customize how errors are printed (prefix, color, bold/underline), using a YAML config file.
+
+### 1) Create a config file
+
+Create a file named `glados.config.yaml` at the project root.
+You can also use `GLADOS_CONFIG=/path/to/config.yaml` to point to another file.
+
+Example:
+
+```yaml
+output_mode: console   # console | html
+
+error:
+    prefix: "*** ERROR: "
+    color: "#FF8500"    # name (red/green/...) or hex (#RRGGBB)
+    bold: true
+    underline: false
+
+html:
+    font_family: "DejaVu Sans Mono, monospace"
+    font_size: "18px"
+    path: "glados_error.html"
+```
+
+### 2) Console mode (recommended)
+
+- `error.color` supports **hex** colors (`#RRGGBB`). This uses truecolor ANSI escapes so the color is correct even if your terminal theme remaps basic ANSI colors.
+
+### 3) HTML mode
+
+If `output_mode: html`:
+
+- GLADOS generates/overwrites `html.path` **once per run** (so past errors do not accumulate).
+- GLADOS tries to auto-open the HTML file in your default browser (Linux: `xdg-open`).
+
 For more detailed information on the TSL language syntax and features, please refer to the [TSL Language Reference](./tsl_language_reference.md). If you have any questions or need further assistance, feel free to reach out to the GLADOS community or check the project's GitHub repository for issues and discussions.
 
 ## ✅ Conclusion
