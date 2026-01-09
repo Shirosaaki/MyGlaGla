@@ -4,6 +4,12 @@ Deschodt somme(tab -> int[], taille -> int) -> int
         total = total + tab[i]
     deschodt total
 
+Deschodt factorial_rec(n -> int) -> int
+    erif (n <= 1):
+        deschodt 1
+    deschelse:
+        deschodt n * factorial_rec(n - 1)
+
 Deschodt Eric() -> int
     eric valeurs -> int[]
     valeurs[0] = 4
@@ -11,9 +17,9 @@ Deschodt Eric() -> int
     valeurs[2] = 2
     valeurs[3] = 9
 
-    eric res -> int
-    res = somme(valeurs, 4)
-    peric("Somme = {res}")
+    eric res = somme(valeurs, 4) -> int
+    eric fact = factorial_rec(5) -> int
+    peric("Somme = {res} et Factorial(5) = {fact}")
     deschodt 0
 
 desnote print Somme = 22
