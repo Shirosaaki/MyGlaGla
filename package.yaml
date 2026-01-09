@@ -28,6 +28,11 @@ dependencies:
   - mtl
   - bytestring
   - filepath
+  - ansi-terminal
+  - yaml
+  - aeson
+  - directory
+  - text
 
 ghc-options:
   - -Wall

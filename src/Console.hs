@@ -13,6 +13,7 @@ import System.Console.Haskeline
 import AST (SExpr(..), Ast(..), Env,
             sexprToAST, evalAST)
 import Parser (parseSExprMultipleEither)
+import UI (printError)
 
 -- Interactive REPL runner
 runConsole :: IO ()
@@ -39,7 +40,7 @@ handleLine :: Env -> String -> ReplM ()
 handleLine env line =
     case parseSExprMultipleEither line of
         Right sexprs -> evalReplSequence env sexprs
-        Left _ -> outputStrLn "Parsing error" >> repl env
+        Left err -> liftIO (printError ("Parsing error: " ++ err)) >> repl env
 
 -- | Capture a multi-line block until ':end', then execute the whole block.
 captureBlock :: Env -> [String] -> ReplM ()
@@ -57,7 +58,7 @@ execBlock env acc =
        then repl env
        else case parseSExprMultipleEither block of
            Right sexprs -> evalReplSequence env sexprs
-           Left _ -> outputStrLn "Parsing error" >> repl env
+           Left err -> liftIO (printError ("Parsing error: " ++ err)) >> repl env
 
 -- | Evaluate a list of s-expressions in the REPL context.
 evalReplSequence :: Env -> [SExpr] -> ReplM ()
@@ -99,8 +100,6 @@ evalSequence env (s:ss) = do
                 Left err -> printError err >> exitWith (ExitFailure 84)
         Left err -> printError err >> exitWith (ExitFailure 84)
 
-printError :: String -> IO ()
-printError msg = hPutStrLn stderr ("*** ERROR : " ++ msg)
 
 printResult' :: Ast -> ReplM ()
 printResult' (AstInt n) = outputStrLn (show n)

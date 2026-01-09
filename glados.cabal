@@ -1,6 +1,6 @@
 cabal-version: 2.2
 
--- This file has been generated from package.yaml by hpack version 0.38.0.
+-- This file has been generated from package.yaml by hpack version 0.38.1.
 --
 -- see: https://github.com/sol/hpack
 
@@ -28,12 +28,14 @@ library
       AST
       Bytecode
       Compiler
+      Config
       Console
       Lib
       Lisp.Parser
       Loader
       Parser
       Theshow.Parser
+      UI
       VM
   other-modules:
       Paths_glados
@@ -43,14 +45,19 @@ library
       src
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
   build-depends:
-      base >=4.7 && <5
+      aeson
+    , ansi-terminal
+    , base >=4.7 && <5
     , bytestring
     , containers
+    , directory
     , filepath
     , haskeline
     , megaparsec
     , mtl
     , process
+    , text
+    , yaml
   default-language: Haskell2010
 
 executable glados
@@ -63,15 +70,20 @@ executable glados
       app
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      base >=4.7 && <5
+      aeson
+    , ansi-terminal
+    , base >=4.7 && <5
     , bytestring
     , containers
+    , directory
     , filepath
     , glados
     , haskeline
     , megaparsec
     , mtl
     , process
+    , text
+    , yaml
   default-language: Haskell2010
 
 test-suite glados-test
@@ -85,9 +97,12 @@ test-suite glados-test
       test
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      base >=4.7 && <5
+      aeson
+    , ansi-terminal
+    , base >=4.7 && <5
     , bytestring
     , containers
+    , directory
     , filepath
     , glados
     , haskeline
@@ -95,4 +110,6 @@ test-suite glados-test
     , megaparsec
     , mtl
     , process
+    , text
+    , yaml
   default-language: Haskell2010

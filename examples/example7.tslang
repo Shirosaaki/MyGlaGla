@@ -9,7 +9,7 @@ Deschodt Eric() -> int
         erif (nom[i] == '\n'):
             n += 1
         deschelse:
-            peric("{nom[i]}")
+            peric("{nom[i]}"
         i += 1
     peric("Ton nom contient {i} caractères et {n} sauts de ligne.")
     deschodt 0

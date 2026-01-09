@@ -18,6 +18,7 @@ import Loader (loadBytecodeFile, disassemble)
 import VM (runVM)
 import qualified VM
 import Control.Monad (when)
+import UI (printError)
 
 main :: IO ()
 main = getArgs >>= \rawArgs -> do
@@ -45,14 +46,14 @@ compileFromStdin :: (Ast -> IO ()) -> IO ()
 compileFromStdin compile = do
     input <- getContents
     case parseSExprMultipleEither input of
-        Left err -> die ("Parsing error:\n" ++ err)
+        Left err -> printError ("Parsing error:\n" ++ err) >> exitWith (ExitFailure 84)
         Right sexprs -> do
             -- Debug: print the parsed S-expressions before converting to AST
             putStrLn "--- SExpr (parsed) ---"
             print sexprs
             putStrLn "----------------------"
             case mapM sexprToAST sexprs of
-                Left perr -> die perr
+                Left perr -> printError perr >> exitWith (ExitFailure 84)
                 Right asts -> do
                     -- If program is a single top-level zero-arg function, auto-invoke it.
                     let asts' = case asts of
@@ -71,7 +72,7 @@ runFileMode path = do
     input <- readFile path
     case parseSExprMultipleEither input of
         Right sexprs -> evalSequence [] sexprs
-        Left err -> hPutStrLn stderr ("*** ERROR: " ++ err) >>
+        Left err -> printError err >>
                     exitWith (ExitFailure 84)
 
 -- Execute bytecode from .o file
@@ -79,13 +80,13 @@ runVMMode :: FilePath -> IO ()
 runVMMode path = do
     result <- loadBytecodeFile path
     case result of
-        Left err -> hPutStrLn stderr ("*** ERROR: " ++ err) >>
+        Left err -> printError err >>
                     exitWith (ExitFailure 84)
         Right instrs -> do
             let (res, outs) = runVM instrs
             mapM_ putStrLn outs
             case res of
-                Left err -> hPutStrLn stderr ("*** RUNTIME ERROR: " ++ err) >>
+                Left err -> printError ("RUNTIME ERROR: " ++ err) >>
                             exitWith (ExitFailure 84)
                 Right val -> printVMResult val
 
@@ -94,7 +95,7 @@ runDisassembleMode :: FilePath -> IO ()
 runDisassembleMode path = do
     result <- loadBytecodeFile path
     case result of
-        Left err -> hPutStrLn stderr ("*** ERROR: " ++ err) >>
+        Left err -> printError err >>
                     exitWith (ExitFailure 84)
         Right instrs -> putStrLn (disassemble instrs)
 
@@ -104,12 +105,12 @@ evalSequence env (s:ss) =
     case sexprToAST s of
         Right ast ->
             case evalAST env ast of
-                Right (result, env') -> printResult' result >>
-                                       evalSequence env' ss
-                Left err -> hPutStrLn stderr ("*** ERROR: " ++ err) >>
-                           exitWith (ExitFailure 84)
-        Left err -> hPutStrLn stderr ("*** ERROR: " ++ err) >>
-                   exitWith (ExitFailure 84)
+                Right (result, env') ->
+                    printResult' result >> evalSequence env' ss
+                Left err ->
+                    printError err >> exitWith (ExitFailure 84)
+        Left err ->
+            printError err >> exitWith (ExitFailure 84)
 
 printResult' :: Ast -> IO ()
 printResult' (AstInt n) = print n

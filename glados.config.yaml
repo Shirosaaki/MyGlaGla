@@ -1,0 +1,19 @@
+# glados error formatting config
+# Place this file as glados.config.yaml in your project root
+# or at ~/.config/glados/config.yaml, or set GLADOS_CONFIG to its path.
+
+# console or html
+output_mode: console
+
+error:
+  prefix: "*** ERROR: "
+  color: "#FF8500"   # orange
+  bold: true         # true/false
+  underline: false   # true/false
+
+# Used when output_mode: html. Lets you control font ("police") and size.
+html:
+  font_family: "DejaVu Sans Mono, monospace"
+  font_size: "18px"
+  color: "#ff5555"   # fallback color if error.color is not set
+  path: "glados_error.html"
