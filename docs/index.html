@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" id="doc-html">
 <head>
   <meta charset="UTF-8">
   <title>Document</title>
@@ -123,15 +123,135 @@
       transform: scale(1.1);
       border-color: var(--accent, #42b983);
     }
+    
+    /* Language Selector */
+    #language-selector {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-right: 5px;
+    }
+    
+    #language-selector label {
+      font-size: 14px;
+      margin: 0;
+      cursor: pointer;
+    }
+    
+    #language-selector select {
+      cursor: pointer;
+      padding: 6px 10px;
+      border: 1px solid var(--border-color, #ccc);
+      background: var(--code-background-color, #f8f8f8);
+      color: var(--text-color, #333);
+      border-radius: 4px;
+      font-size: 12px;
+      outline: none;
+      height: 32px;
+    }
+    
+    #language-selector select:hover {
+      background: var(--accent, #42b983);
+      color: #fff;
+      border-color: var(--accent, #42b983);
+    }
+
   </style>
 </head>
 <body>
   <div id="app"></div>
   <script>
+    // Language translations
+    const translations = {
+      en: {
+        settingsButton: '⚙️ Accessibility Settings',
+        fontSize: 'Font Size',
+        reset: 'Reset',
+        textColor: 'Text Color',
+        contrast: 'Contrast',
+        language: '🌐 Language'
+      },
+      fr: {
+        settingsButton: '⚙️ Paramètres d\'accessibilité',
+        fontSize: 'Taille de police',
+        reset: 'Réinitialiser',
+        textColor: 'Couleur du texte',
+        contrast: 'Contraste',
+        language: '🌐 Langue'
+      },
+      es: {
+        settingsButton: '⚙️ Configuración de accesibilidad',
+        fontSize: 'Tamaño de fuente',
+        reset: 'Restablecer',
+        textColor: 'Color del texto',
+        contrast: 'Contraste',
+        language: '🌐 Idioma'
+      },
+      de: {
+        settingsButton: '⚙️ Barrierefreiheitseinstellungen',
+        fontSize: 'Schriftgröße',
+        reset: 'Zurücksetzen',
+        textColor: 'Textfarbe',
+        contrast: 'Kontrast',
+        language: '🌐 Sprache'
+      }
+    };
+    
+    // Get or set language preference
+    function getCurrentLanguage() {
+      return localStorage.getItem('docLanguage') || 'en';
+    }
+    
+    function setLanguage(lang) {
+      localStorage.setItem('docLanguage', lang);
+      document.getElementById('doc-html').setAttribute('lang', lang);
+      updateUILanguage(lang);
+    }
+    
+    function updateUILanguage(lang) {
+      const t = translations[lang] || translations.en;
+      
+      // Update accessibility controls if they exist
+      const toggleBtn = document.getElementById('accessibility-toggle');
+      if (toggleBtn) {
+        toggleBtn.innerText = t.settingsButton;
+      }
+      
+      // Update other UI elements
+      const labels = document.querySelectorAll('.control-group label');
+      if (labels.length > 0) {
+        labels[0].childNodes[0].textContent = t.fontSize;
+      }
+      if (labels.length > 2) {
+        labels[1].childNodes[0].textContent = t.textColor;
+      }
+      if (labels.length > 3) {
+        const contrastLabel = labels[2];
+        const value = document.getElementById('contrast-value');
+        if (value) {
+          contrastLabel.childNodes[0].textContent = t.contrast + ': ';
+        }
+      }
+      
+      const resetBtn = document.querySelector('button[aria-label*="Reset"]');
+      if (resetBtn) {
+        resetBtn.innerText = t.reset;
+        resetBtn.setAttribute('aria-label', t.reset);
+      }
+    }
+    
+    // Get initial language-based path
+    function getLanguageBasePath() {
+      var lang = getCurrentLanguage();
+      return '/' + lang + '/';
+    }
+  
     window.$docsify = {
       name: 'GLADOS',
       repo: '',
       loadNavbar: true,
+      basePath: getLanguageBasePath(),
+      fallbackLanguages: ['en'],
       darklightTheme: {
         siteFont : "PT Sans",
         defaultTheme : 'dark',
@@ -170,15 +290,57 @@
       },
       plugins: [
         function(hook, vm) {
+          // Initialize language selector on load
+          hook.init(function() {
+             // Set initial language but don't create separate selector
+             setLanguage(getCurrentLanguage());
+          });
+          
           hook.doneEach(function() {
             if (!document.getElementById('accessibility-controls')) {
               var div = document.createElement('div');
               div.id = 'accessibility-controls';
               
+              // Language Selector (integrated)
+              var langDiv = document.createElement('div');
+              langDiv.id = 'language-selector';
+              
+              var langSelect = document.createElement('select');
+              langSelect.id = 'lang-select';
+              langSelect.setAttribute('aria-label', 'Select language');
+              
+              var languages = [
+                { code: 'en', name: 'EN' },
+                { code: 'fr', name: 'FR' },
+                { code: 'es', name: 'ES' },
+                { code: 'de', name: 'DE' }
+              ];
+              
+              languages.forEach(function(lang) {
+                var option = document.createElement('option');
+                option.value = lang.code;
+                option.innerText = lang.name;
+                if (lang.code === getCurrentLanguage()) {
+                  option.selected = true;
+                }
+                langSelect.appendChild(option);
+              });
+              
+              langSelect.onchange = function() {
+                setLanguage(this.value);
+                // Reload to apply language-based routing
+                window.location.reload();
+              };
+              
+              langDiv.appendChild(langSelect);
+              
               // Toggle button
               var toggleBtn = document.createElement('button');
+
               toggleBtn.id = 'accessibility-toggle';
-              toggleBtn.innerText = '⚙️ Accessibility Settings';
+              var currentLang = getCurrentLanguage();
+              var t = translations[currentLang] || translations.en;
+              toggleBtn.innerText = t.settingsButton;
               toggleBtn.onclick = function() {
                 var panel = document.getElementById('accessibility-panel');
                 panel.classList.toggle('open');
@@ -191,7 +353,7 @@
               // Font size controls
               var fontGroup = document.createElement('div');
               fontGroup.className = 'control-group';
-              fontGroup.innerHTML = '<label>Font Size</label>';
+              fontGroup.innerHTML = '<label>' + t.fontSize + '</label>';
               
               var fontRow = document.createElement('div');
               fontRow.className = 'button-row';
@@ -208,7 +370,7 @@
               };
 
               var btnReset = document.createElement('button');
-              btnReset.innerText = 'Reset';
+              btnReset.innerText = t.reset;
               btnReset.setAttribute('aria-label', 'Reset font size');
               btnReset.onclick = function() { 
                 document.body.style.fontSize = ''; 
@@ -238,7 +400,7 @@
               // Text color controls
               var colorGroup = document.createElement('div');
               colorGroup.className = 'control-group';
-              colorGroup.innerHTML = '<label>Text Color</label>';
+              colorGroup.innerHTML = '<label>' + t.textColor + '</label>';
               
               var colorRow = document.createElement('div');
               colorRow.className = 'button-row';
@@ -287,7 +449,7 @@
               // Contrast controls
               var contrastGroup = document.createElement('div');
               contrastGroup.className = 'control-group';
-              contrastGroup.innerHTML = '<label>Contrast: <span id="contrast-value">100%</span></label>';
+              contrastGroup.innerHTML = '<label>' + t.contrast + ': <span id="contrast-value">100%</span></label>';
               
               var contrastSlider = document.createElement('input');
               contrastSlider.type = 'range';
@@ -310,6 +472,7 @@
               panel.appendChild(colorGroup);
               panel.appendChild(contrastGroup);
               
+              div.appendChild(langDiv);
               div.appendChild(toggleBtn);
               div.appendChild(panel);
               document.body.appendChild(div);
