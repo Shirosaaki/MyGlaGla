@@ -5,6 +5,17 @@ import qualified Data.Map.Strict as Map
 import Data.List (isInfixOf)
 import System.Process (callCommand)
 import System.IO (hPutStr, stderr)
+import Control.Exception (catch, SomeException(..), displayException)
+import System.Exit (exitFailure)
+import UI (printError)
+import System.IO.Unsafe (unsafePerformIO)
+
+-- =============================================================================
+-- Configuration
+-- =============================================================================
+
+builtIns :: [String]
+builtIns = ["renaud", "romaric", "marvin", "str_concat", "+", "-", "*", "/", "%", "==", "<", ">", "<=", ">=", "!=", "assign", "define", "array-type", "array-access", "string-interp"]
 
 -- =============================================================================
 -- LLVM Stubs (Required for Export)
@@ -57,6 +68,12 @@ collectNamesForLocals (While _ body) = collectNamesForLocals body
 collectNamesForLocals (IfElse _ th el) = collectNamesForLocals th ++ collectNamesForLocals el
 collectNamesForLocals _ = []
 
+collectFunctionNames :: Ast -> [String]
+collectFunctionNames (Block xs) = concatMap collectFunctionNames xs
+collectFunctionNames (AstList xs) = concatMap collectFunctionNames xs
+collectFunctionNames (Define n _ (AstLambda _ _)) = [n]
+collectFunctionNames _ = []
+
 buildLocalMap :: Ast -> Map.Map String Int
 buildLocalMap ast = 
     let names = uniqueList (collectNamesForLocals ast)
@@ -71,34 +88,41 @@ buildLocalMap ast =
 -- =============================================================================
 
 compileToObject :: FilePath -> Ast -> IO ()
-compileToObject out ast = do
+compileToObject out ast = catch (do
     let asm = emitASM ast
         asmFile = "/tmp/glados_emit.s"
+    -- Force evaluation of asm string to trigger any semantic errors BEFORE writing/calling GCC
+    _ <- return $! length asm 
     writeFile asmFile asm
     hPutStr stderr ("---ASM START---\n" ++ asm ++ "\n---ASM END---\n")
     _ <- callCommand ("as -o " ++ out ++ " " ++ asmFile)
-    return ()
+    return ()) handler
+  where
+    -- Catch any exception (including 'error')
+    handler :: SomeException -> IO ()
+    handler e = do
+        putStrLn $ "Compilation Error: " ++ displayException e
+        exitFailure
 
 emitASM :: Ast -> String
 emitASM ast =
     let varTypes = collectVarTypes ast Map.empty
+        funcNames = collectFunctionNames ast
         strs = uniqueList (collectStrings ast varTypes) 
         labels = zip strs [0..]
-    in concatMap (emitData) labels ++ "\n" ++ emitText ast labels varTypes ++ "\n" ++ builtInFunctions
+    in concatMap (emitData) labels ++ "\n" ++ emitText ast labels varTypes funcNames ++ "\n" ++ builtInFunctions
 
 emitData :: (String, Int) -> String
 emitData (s, i) = ".globl LC" ++ show i ++ "\nLC" ++ show i ++ ": .string \"" ++ escapeASM s ++ "\"\n"
 
-emitText :: Ast -> [(String, Int)] -> Map.Map String Type -> String
-emitText (Block asts) labels vt =
+emitText :: Ast -> [(String, Int)] -> Map.Map String Type -> [String] -> String
+emitText (Block asts) labels vt funcNames =
     let (funcs, stmts) = partitionDefines asts
-        funcASM = concatMap (emitFunc labels vt) funcs
+        funcASM = concatMap (emitFunc labels vt funcNames) funcs
         
-        -- Logic to determine if we need to auto-call Eric
         hasEric = any (\f -> case f of Define "Eric" _ _ -> True; _ -> False) funcs
-        -- Check if stmts contains any executable code (not just Struct defs or comments)
         isExecutable (Struct _ _) = False
-        isExecutable (AstList []) = False -- comment
+        isExecutable (AstList []) = False
         isExecutable _ = True
         
         hasExecStmts = any isExecutable stmts
@@ -116,11 +140,11 @@ emitText (Block asts) labels vt =
         clearMem = concatMap (\(n, sz) -> case Map.lookup n localMap of
             Just off -> ["\tmovq $" ++ show ((sz :: Int) `div` 8) ++ ", %rcx", "\txorq %rax, %rax", "\tleaq -" ++ show off ++ "(%rbp), %rdi", "\trep stosq"]
             Nothing -> []) [("nums", 808), ("memo", 1000000)]
-        (_, body, _) = emitStmts mainAST 0 labels localMap ".Lreturn" Nothing Nothing vt Map.empty
+        (_, body, _) = emitStmts mainAST 0 labels localMap ".Lreturn" Nothing Nothing vt Map.empty funcNames
         epilogue = [".Lreturn:", "\taddq $" ++ show allocSize ++ ", %rsp", "\tpopq %rbp", "\tret"]
         mainASM = unlines $ prologue ++ clearMem ++ map ("\t" ++) body ++ epilogue
     in funcASM ++ "\n" ++ mainASM
-emitText ast labels vt = emitText (Block [ast]) labels vt
+emitText ast labels vt funcNames = emitText (Block [ast]) labels vt funcNames
 
 partitionDefines :: [Ast] -> ([Ast], [Ast])
 partitionDefines [] = ([], [])
@@ -129,8 +153,8 @@ partitionDefines (x@(Define _ _ (AstLambda _ _)) : xs) =
 partitionDefines (x:xs) = 
     let (f, s) = partitionDefines xs in (f, x:s)
 
-emitFunc :: [(String, Int)] -> Map.Map String Type -> Ast -> String
-emitFunc labels vt (Define name _ (AstLambda params body)) =
+emitFunc :: [(String, Int)] -> Map.Map String Type -> [String] -> Ast -> String
+emitFunc labels vt funcNames (Define name _ (AstLambda params body)) =
     let allNames = uniqueList (params ++ collectNamesForLocals body)
         calc [] _ acc = acc
         calc (n:ns) cur acc = 
@@ -140,7 +164,6 @@ emitFunc labels vt (Define name _ (AstLambda params body)) =
         maxOffset = if Map.null localMap then 8 else maximum (Map.elems localMap)
         allocSize = ((maxOffset + 31) `div` 16) * 16
         prologue = [name ++ ":", "\tpushq %rbp", "\tmovq %rsp, %rbp", "\tsubq $" ++ show allocSize ++ ", %rsp"]
-        -- Handle parameters: move registers to stack
         paramRegs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"]
         paramMoves = concat $ zipWith (\p r -> 
             case Map.lookup p localMap of
@@ -148,91 +171,110 @@ emitFunc labels vt (Define name _ (AstLambda params body)) =
                 Nothing -> []
             ) params paramRegs
         retLabel = ".Lret_" ++ name
-        (_, bStmts, _) = emitStmts body 0 labels localMap retLabel Nothing Nothing vt Map.empty
+        (_, bStmts, _) = emitStmts body 0 labels localMap retLabel Nothing Nothing vt Map.empty funcNames
         epilogue = [retLabel ++ ":", "\tleave", "\tret"]
     in unlines (prologue ++ paramMoves ++ map ("\t" ++) bStmts ++ epilogue)
-emitFunc _ _ _ = ""
+emitFunc _ _ _ _ = ""
 
 -- =============================================================================
 -- Expression & Statement Logic
 -- =============================================================================
 
-exprToASM :: Ast -> Map.Map String Int -> [(String, Int)] -> Map.Map String Type -> [String]
-exprToASM (AstInt n) _ _ _ = ["movq $" ++ show n ++ ", %rax"]
-exprToASM (AstChar c) _ _ _ = ["movq $" ++ show (fromEnum c) ++ ", %rax"]
-exprToASM (AstSymbol v) locals labels vt
-    | " + " `isInfixOf` v = let p = words v in exprToASM (Call (AstSymbol "+") [AstSymbol (p!!0), AstSymbol (p!!2)]) locals labels vt
-    | "[" `isInfixOf` v = -- Generic shorthand: array[index]
+exprToASM :: Ast -> Map.Map String Int -> [(String, Int)] -> Map.Map String Type -> [String] -> [String]
+exprToASM (AstInt n) _ _ _ _ = ["movq $" ++ show n ++ ", %rax"]
+exprToASM (AstChar c) _ _ _ _ = ["movq $" ++ show (fromEnum c) ++ ", %rax"]
+exprToASM (AstSymbol v) locals labels vt fns
+    | " + " `isInfixOf` v = let p = words v in exprToASM (Call (AstSymbol "+") [AstSymbol (p!!0), AstSymbol (p!!2)]) locals labels vt fns
+    | "[" `isInfixOf` v = 
         let name = takeWhile (/= '[') v
             idx  = reverse $ takeWhile (/= '[') $ drop 1 $ reverse v
-        in exprToASM (Call (AstSymbol "array-access") [AstSymbol name, AstSymbol idx]) locals labels vt
+        in exprToASM (Call (AstSymbol "array-access") [AstSymbol name, AstSymbol idx]) locals labels vt fns
     | otherwise = case Map.lookup v locals of
         Just off -> ["movq -" ++ show off ++ "(%rbp), %rax"]
-        Nothing  -> ["movq $0, %rax"]
-exprToASM (AstString s) _ labels _ = ["leaq LC" ++ show (maybe 0 id (lookup s labels)) ++ "(%rip), %rax"]
-exprToASM (Call (AstSymbol "+") [lhs, rhs]) locals labels vt =
+        Nothing  -> unsafePerformIO $ do
+            printError ("Compilation Error: Undefined variable '" ++ v ++ "'")
+            exitFailure
+exprToASM (AstString s) _ labels _ _ = ["leaq LC" ++ show (maybe 0 id (lookup s labels)) ++ "(%rip), %rax"]
+exprToASM (Call (AstSymbol "+") [lhs, rhs]) locals labels vt fns =
     let isStr a = case a of { AstString _ -> True; AstSymbol s -> Map.lookup s vt == Just TString; Call (AstSymbol f) _ -> f `elem` ["renaud","romaric","str_concat","+"]; _ -> False }
     in if isStr lhs || isStr rhs
-       then exprToASM lhs locals labels vt ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt ++ ["movq %rax, %rsi", "popq %rdi", "call str_concat"]
-       else exprToASM lhs locals labels vt ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt ++ ["movq %rax, %rdx", "popq %rax", "addq %rdx, %rax"]
-exprToASM (Call (AstSymbol "-") [lhs, rhs]) locals labels vt =
-    exprToASM lhs locals labels vt ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt ++ ["movq %rax, %rdx", "popq %rax", "subq %rdx, %rax"]
-exprToASM (Call (AstSymbol "*") [lhs, rhs]) locals labels vt =
-    exprToASM lhs locals labels vt ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt ++ ["movq %rax, %rdx", "popq %rax", "imulq %rdx, %rax"]
-exprToASM (Call (AstSymbol "/") [lhs, rhs]) locals labels vt =
-    exprToASM lhs locals labels vt ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt ++ ["movq %rax, %rcx", "popq %rax", "cqo", "idivq %rcx"]
-exprToASM (Call (AstSymbol "%") [lhs, rhs]) locals labels vt =
-    exprToASM lhs locals labels vt ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt ++ ["movq %rax, %rcx", "popq %rax", "cqo", "idivq %rcx", "movq %rdx, %rax"]
-exprToASM (Call (AstSymbol "array-access") [AstSymbol name, idxExpr]) locals labels vt =
-    let off = Map.findWithDefault 0 name locals
+       then exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt fns ++ ["movq %rax, %rsi", "popq %rdi", "call str_concat"]
+       else exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt fns ++ ["movq %rax, %rdx", "popq %rax", "addq %rdx, %rax"]
+exprToASM (Call (AstSymbol "-") [lhs, rhs]) locals labels vt fns =
+    exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt fns ++ ["movq %rax, %rdx", "popq %rax", "subq %rdx, %rax"]
+exprToASM (Call (AstSymbol "*") [lhs, rhs]) locals labels vt fns =
+    exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt fns ++ ["movq %rax, %rdx", "popq %rax", "imulq %rdx, %rax"]
+exprToASM (Call (AstSymbol "/") [lhs, rhs]) locals labels vt fns =
+    exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt fns ++ ["movq %rax, %rcx", "popq %rax", "cqo", "idivq %rcx"]
+exprToASM (Call (AstSymbol "%") [lhs, rhs]) locals labels vt fns =
+    exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt fns ++ ["movq %rax, %rcx", "popq %rax", "cqo", "idivq %rcx", "movq %rdx, %rax"]
+exprToASM (Call (AstSymbol "array-access") [AstSymbol name, idxExpr]) locals labels vt fns =
+    let off = case Map.lookup name locals of
+                Just o -> o
+                Nothing -> unsafePerformIO $ do
+                    printError ("Compilation Error: Undefined array/variable '" ++ name ++ "'")
+                    exitFailure
         isString = Map.lookup name vt == Just TString
     in if isString
-       then exprToASM idxExpr locals labels vt ++ ["movq %rax, %rcx", "movq -" ++ show off ++ "(%rbp), %rdx", "addq %rcx, %rdx", "movzbq (%rdx), %rax"]
-       else exprToASM idxExpr locals labels vt ++ ["pushq %rax", "leaq -" ++ show off ++ "(%rbp), %rdx", "popq %rcx", "movq (%rdx, %rcx, 8), %rax"]
-exprToASM (Call (AstSymbol op) [lhs, rhs]) locals labels vt
+       then exprToASM idxExpr locals labels vt fns ++ ["movq %rax, %rcx", "movq -" ++ show off ++ "(%rbp), %rdx", "addq %rcx, %rdx", "movzbq (%rdx), %rax"]
+       else exprToASM idxExpr locals labels vt fns ++ ["pushq %rax", "leaq -" ++ show off ++ "(%rbp), %rdx", "popq %rcx", "movq (%rdx, %rcx, 8), %rax"]
+exprToASM (Call (AstSymbol op) [lhs, rhs]) locals labels vt fns
     | op `elem` ["<", "==", ">", "<=", ">=", "!="] = 
         let instr = case op of { "<" -> "setl"; "==" -> "sete"; ">" -> "setg"; "<=" -> "setle"; ">=" -> "setge"; "!=" -> "setne"; _ -> "sete" }
-        in exprToASM lhs locals labels vt ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt ++ ["movq %rax, %rdx", "popq %rax", "cmpq %rdx, %rax", instr ++ " %al", "movzbq %al, %rax"]
-exprToASM (Call (AstSymbol func) args) locals labels vt
-    | "[" `isInfixOf` func = exprToASM (AstSymbol func) locals labels vt
-    | Map.member func locals && null args = exprToASM (AstSymbol func) locals labels vt
-    | func `notElem` ["+", "-", "*", "/", "%", "==", "<", ">", "<=", ">=", "!=", "assign", "define", "array-type", "array-access"] =
-        let evals = concatMap (\arg -> exprToASM arg locals labels vt ++ ["pushq %rax"]) args
+        in exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt fns ++ ["movq %rax, %rdx", "popq %rax", "cmpq %rdx, %rax", instr ++ " %al", "movzbq %al, %rax"]
+exprToASM (Call (AstSymbol func) args) locals labels vt fns
+    | "[" `isInfixOf` func = exprToASM (AstSymbol func) locals labels vt fns
+    | Map.member func locals && null args = exprToASM (AstSymbol func) locals labels vt fns
+    | func `notElem` builtIns =
+        if func `notElem` fns
+        then unsafePerformIO $ do
+            printError ("Compilation Error: Undefined function '" ++ func ++ "'")
+            exitFailure
+        else
+            let evals = concatMap (\arg -> exprToASM arg locals labels vt fns ++ ["pushq %rax"]) args
+                loads = concat $ reverse $ zipWith (\_ r -> ["popq " ++ r]) args ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"]
+            in evals ++ loads ++ ["movb $0, %al", "call " ++ func]
+    | otherwise = -- Built-in functions
+        let evals = concatMap (\arg -> exprToASM arg locals labels vt fns ++ ["pushq %rax"]) args
             loads = concat $ reverse $ zipWith (\_ r -> ["popq " ++ r]) args ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"]
         in evals ++ loads ++ ["movb $0, %al", "call " ++ func]
-exprToASM _ _ _ _ = ["movq $0, %rax"]
+exprToASM _ _ _ _ _ = ["movq $0, %rax"]
 
-stmtToASM :: Ast -> Int -> [(String, Int)] -> Map.Map String Int -> String -> Maybe String -> Maybe String -> Map.Map String Type -> Map.Map String Int -> (Int, [String], Map.Map String Int)
-stmtToASM (Call (AstSymbol "define") [AstSymbol n, val, _]) uid l loc r ls le vt li = stmtToASM (Assign n val) uid l loc r ls le vt li
-stmtToASM (Call (AstSymbol "define") [AstSymbol _, _]) uid _ _ _ _ _ _ li = (uid, [], li)
-stmtToASM (Define _ _ (AstLambda _ _)) uid _ _ _ _ _ _ li = (uid, [], li)
-stmtToASM (Define name _ val) uid labels locals _ _ _ vt li =
+stmtToASM :: Ast -> Int -> [(String, Int)] -> Map.Map String Int -> String -> Maybe String -> Maybe String -> Map.Map String Type -> Map.Map String Int -> [String] -> (Int, [String], Map.Map String Int)
+stmtToASM (Call (AstSymbol "define") [AstSymbol n, val, _]) uid l loc r ls le vt li fns = stmtToASM (Assign n val) uid l loc r ls le vt li fns
+stmtToASM (Call (AstSymbol "define") [AstSymbol _, _]) uid _ _ _ _ _ _ li _ = (uid, [], li)
+stmtToASM (Define _ _ (AstLambda _ _)) uid _ _ _ _ _ _ li _ = (uid, [], li)
+stmtToASM (Define name _ val) uid labels locals _ _ _ vt li fns =
     let off = Map.findWithDefault 0 name locals
         isString = Map.lookup name vt == Just TString
         instrs = if isString && val /= AstVoid
                  then if val == AstString ""
                       then ["movq $1048576, %rdi", "call malloc", "movq %rax, -" ++ show off ++ "(%rbp)", "movb $0, (%rax)"]
-                      else exprToASM val locals labels vt ++ ["pushq %rax", "movq %rax, %rdi", "call strlen", "incq %rax", "movq %rax, %rdi", "call malloc", "movq %rax, -" ++ show off ++ "(%rbp)", "movq -" ++ show off ++ "(%rbp), %rdi", "popq %rsi", "call strcpy"]
+                      else exprToASM val locals labels vt fns ++ ["pushq %rax", "movq %rax, %rdi", "call strlen", "incq %rax", "movq %rax, %rdi", "call malloc", "movq %rax, -" ++ show off ++ "(%rbp)", "movq -" ++ show off ++ "(%rbp), %rdi", "popq %rsi", "call strcpy"]
                  else if val == AstVoid then []
-                      else exprToASM val locals labels vt ++ ["movq %rax, -" ++ show off ++ "(%rbp)"]
+                      else exprToASM val locals labels vt fns ++ ["movq %rax, -" ++ show off ++ "(%rbp)"]
     in (uid, instrs, li)
-stmtToASM (Assign name val) uid labels locals _ _ _ vt li =
-    let off = Map.findWithDefault 0 name locals
-    in if off > 0 then (uid, exprToASM val locals labels vt ++ ["movq %rax, -" ++ show off ++ "(%rbp)"], li) else (uid, [], li)
-stmtToASM (Call (AstSymbol "peric") [Call (AstSymbol "string-interp") pts]) uid labels locals _ _ _ vt li =
+stmtToASM (Assign name val) uid labels locals _ _ _ vt li fns =
+    let off = case Map.lookup name locals of
+                Just o -> o
+                Nothing -> error ("Error: Assignment to undefined variable '" ++ name ++ "'") -- STRICT CHECK
+    in (uid, exprToASM val locals labels vt fns ++ ["movq %rax, -" ++ show off ++ "(%rbp)"], li)
+stmtToASM (Call (AstSymbol "peric") [Call (AstSymbol "string-interp") pts]) uid labels locals _ _ _ vt li fns =
     let flat = flattenStringInterp pts
         fmt = buildFormatString vt flat ++ "\n"
         fmtIdx = maybe 0 id (lookup fmt labels)
         args = [p | p <- flat, not (isStringNode p)]
-        evals = concatMap (\p -> exprToASM p locals labels vt ++ ["pushq %rax"]) args
+        evals = concatMap (\p -> exprToASM p locals labels vt fns ++ ["pushq %rax"]) args
         loads = concat $ reverse $ zipWith (\_ r -> ["popq " ++ r]) args ["%rsi", "%rdx", "%rcx", "%r8", "%r9"]
     in (uid, evals ++ loads ++ ["leaq LC" ++ show fmtIdx ++ "(%rip), %rdi", "movb $0, %al", "call printf"], li)
-stmtToASM (Call (AstSymbol "assign") [Call (AstSymbol "array-access") [AstSymbol n, i], v]) uid labels locals _ _ _ vt li =
-    let off = Map.findWithDefault 0 n locals
+stmtToASM (Call (AstSymbol "assign") [Call (AstSymbol "array-access") [AstSymbol n, i], v]) uid labels locals _ _ _ vt li fns =
+    let off = case Map.lookup n locals of
+                Just o -> o
+                Nothing -> error ("Error: Undefined array '" ++ n ++ "'")
         isString = Map.lookup n vt == Just TString
         instrs = if isString
-                 then exprToASM i locals labels vt ++ ["pushq %rax"] ++ exprToASM v locals labels vt ++ ["popq %rdx", "movq -" ++ show off ++ "(%rbp), %rcx", "addq %rdx, %rcx", "movb %al, (%rcx)"]
-                 else exprToASM i locals labels vt ++ ["pushq %rax"] ++ exprToASM v locals labels vt ++ ["popq %rdx", "leaq -" ++ show off ++ "(%rbp), %rcx", "movq %rax, (%rcx, %rdx, 8)"]
+                 then exprToASM i locals labels vt fns ++ ["pushq %rax"] ++ exprToASM v locals labels vt fns ++ ["popq %rdx", "movq -" ++ show off ++ "(%rbp), %rcx", "addq %rdx, %rcx", "movb %al, (%rcx)"]
+                 else exprToASM i locals labels vt fns ++ ["pushq %rax"] ++ exprToASM v locals labels vt fns ++ ["popq %rdx", "leaq -" ++ show off ++ "(%rbp), %rcx", "movq %rax, (%rcx, %rdx, 8)"]
         fillInstrs = case i of
             AstInt k -> case Map.lookup n li of
                 Just lastK | k > lastK + 1 -> 
@@ -247,53 +289,52 @@ stmtToASM (Call (AstSymbol "assign") [Call (AstSymbol "array-access") [AstSymbol
             AstInt k -> Map.insert n k li
             _ -> li
     in (uid, fillInstrs ++ instrs, newLi)
-stmtToASM (Call (AstSymbol "assign") [AstSymbol n, v]) uid l loc _ ls le vt li = stmtToASM (Assign n v) uid l loc "" ls le vt li
-stmtToASM (Call (AstSymbol "for") [AstSymbol v, s, e, b]) uid labels locals ret _ _ vt li =
+stmtToASM (Call (AstSymbol "assign") [AstSymbol n, v]) uid l loc _ ls le vt li fns = stmtToASM (Assign n v) uid l loc "" ls le vt li fns
+stmtToASM (Call (AstSymbol "for") [AstSymbol v, s, e, b]) uid labels locals ret _ _ vt li fns =
     let off = Map.findWithDefault 0 v locals
         lS = ".L_s_" ++ show uid
         lE = ".L_e_" ++ show uid
         loopInc = ".L_inc_" ++ show uid
-        (uid', bStmts, li') = emitStmts b (uid + 1) labels locals ret (Just loopInc) (Just lE) vt li
-        instrs = exprToASM s locals labels vt ++ ["movq %rax, -" ++ show off ++ "(%rbp)", lS ++ ":"] ++ exprToASM (Call (AstSymbol "<") [AstSymbol v, e]) locals labels vt ++ ["cmpq $0, %rax", "je " ++ lE] ++ bStmts ++ [loopInc ++ ":", "movq -" ++ show off ++ "(%rbp), %rax", "incq %rax", "movq %rax, -" ++ show off ++ "(%rbp)", "jmp " ++ lS, lE ++ ":"]
+        (uid', bStmts, li') = emitStmts b (uid + 1) labels locals ret (Just loopInc) (Just lE) vt li fns
+        instrs = exprToASM s locals labels vt fns ++ ["movq %rax, -" ++ show off ++ "(%rbp)", lS ++ ":"] ++ exprToASM (Call (AstSymbol "<") [AstSymbol v, e]) locals labels vt fns ++ ["cmpq $0, %rax", "je " ++ lE] ++ bStmts ++ [loopInc ++ ":", "movq -" ++ show off ++ "(%rbp), %rax", "incq %rax", "movq %rax, -" ++ show off ++ "(%rbp)", "jmp " ++ lS, lE ++ ":"]
     in (uid', instrs, li')
-stmtToASM (IfElse cond th el) uid labels locals ret ls le vt li =
+stmtToASM (IfElse cond th el) uid labels locals ret ls le vt li fns =
     let lElse = ".L_else_" ++ show uid
         lEnd = ".L_end_" ++ show uid
-        (uid1, thStmts, li1) = emitStmts th (uid + 1) labels locals ret ls le vt li
-        (uid2, elStmts, li2) = emitStmts el uid1 labels locals ret ls le vt li
-        instrs = exprToASM cond locals labels vt ++ ["cmpq $0, %rax", "je " ++ lElse] ++ thStmts ++ ["jmp " ++ lEnd, lElse ++ ":"] ++ elStmts ++ [lEnd ++ ":"]
+        (uid1, thStmts, li1) = emitStmts th (uid + 1) labels locals ret ls le vt li fns
+        (uid2, elStmts, li2) = emitStmts el uid1 labels locals ret ls le vt li fns
+        instrs = exprToASM cond locals labels vt fns ++ ["cmpq $0, %rax", "je " ++ lElse] ++ thStmts ++ ["jmp " ++ lEnd, lElse ++ ":"] ++ elStmts ++ [lEnd ++ ":"]
     in (uid2, instrs, li2 `Map.union` li1)
-stmtToASM (Call (AstSymbol "while") [cond, body]) uid labels locals ret _ _ vt li =
+stmtToASM (Call (AstSymbol "while") [cond, body]) uid labels locals ret _ _ vt li fns =
     let lStart = ".L_w_s" ++ show uid
         lEnd = ".L_w_e" ++ show uid
-        (uid', bStmts, li') = emitStmts body (uid + 1) labels locals ret (Just lStart) (Just lEnd) vt li
-        instrs = [lStart ++ ":"] ++ exprToASM cond locals labels vt ++ ["cmpq $0, %rax", "je " ++ lEnd] ++ bStmts ++ ["jmp " ++ lStart, lEnd ++ ":"]
+        (uid', bStmts, li') = emitStmts body (uid + 1) labels locals ret (Just lStart) (Just lEnd) vt li fns
+        instrs = [lStart ++ ":"] ++ exprToASM cond locals labels vt fns ++ ["cmpq $0, %rax", "je " ++ lEnd] ++ bStmts ++ ["jmp " ++ lStart, lEnd ++ ":"]
     in (uid', instrs, li')
-stmtToASM (Return v) uid l locals ret _ _ vt li = (uid, exprToASM v locals l vt ++ ["jmp " ++ ret], li)
-stmtToASM Break uid _ _ _ _ (Just le) _ li = (uid, ["jmp " ++ le], li)
-stmtToASM Continue uid _ _ _ (Just ls) _ _ li = (uid, ["jmp " ++ ls], li)
-stmtToASM Break uid _ _ _ _ _ _ li = (uid, [], li)
-stmtToASM Continue uid _ _ _ _ _ _ li = (uid, [], li)
-stmtToASM (Block xs) uid l loc ret ls le vt li = handleBrokenNodes xs uid l loc ret ls le vt li
-stmtToASM (AstList xs) uid l loc ret ls le vt li = handleBrokenNodes xs uid l loc ret ls le vt li
--- Handle Struct: do nothing
-stmtToASM (Struct _ _) uid _ _ _ _ _ _ li = (uid, [], li)
-stmtToASM a uid l loc _ _ _ vt li = (uid, exprToASM a loc l vt, li)
+stmtToASM (Return v) uid l locals ret _ _ vt li fns = (uid, exprToASM v locals l vt fns ++ ["jmp " ++ ret], li)
+stmtToASM Break uid _ _ _ _ (Just le) _ li _ = (uid, ["jmp " ++ le], li)
+stmtToASM Continue uid _ _ _ (Just ls) _ _ li _ = (uid, ["jmp " ++ ls], li)
+stmtToASM Break uid _ _ _ _ _ _ li _ = (uid, [], li)
+stmtToASM Continue uid _ _ _ _ _ _ li _ = (uid, [], li)
+stmtToASM (Block xs) uid l loc ret ls le vt li fns = handleBrokenNodes xs uid l loc ret ls le vt li fns
+stmtToASM (AstList xs) uid l loc ret ls le vt li fns = handleBrokenNodes xs uid l loc ret ls le vt li fns
+stmtToASM (Struct _ _) uid _ _ _ _ _ _ li _ = (uid, [], li)
+stmtToASM a uid l loc _ _ _ vt li fns = (uid, exprToASM a loc l vt fns, li)
 
-emitStmts :: Ast -> Int -> [(String, Int)] -> Map.Map String Int -> String -> Maybe String -> Maybe String -> Map.Map String Type -> Map.Map String Int -> (Int, [String], Map.Map String Int)
-emitStmts (Block xs) uid l loc r ls le vt li = handleBrokenNodes xs uid l loc r ls le vt li
-emitStmts a uid l loc r ls le vt li = stmtToASM a uid l loc r ls le vt li
+emitStmts :: Ast -> Int -> [(String, Int)] -> Map.Map String Int -> String -> Maybe String -> Maybe String -> Map.Map String Type -> Map.Map String Int -> [String] -> (Int, [String], Map.Map String Int)
+emitStmts (Block xs) uid l loc r ls le vt li fns = handleBrokenNodes xs uid l loc r ls le vt li fns
+emitStmts a uid l loc r ls le vt li fns = stmtToASM a uid l loc r ls le vt li fns
 
-handleBrokenNodes :: [Ast] -> Int -> [(String, Int)] -> Map.Map String Int -> String -> Maybe String -> Maybe String -> Map.Map String Type -> Map.Map String Int -> (Int, [String], Map.Map String Int)
-handleBrokenNodes [] uid _ _ _ _ _ _ li = (uid, [], li)
-handleBrokenNodes (Assign n (AstSymbol f) : AstString a : xs) uid l loc r ls le vt li 
+handleBrokenNodes :: [Ast] -> Int -> [(String, Int)] -> Map.Map String Int -> String -> Maybe String -> Maybe String -> Map.Map String Type -> Map.Map String Int -> [String] -> (Int, [String], Map.Map String Int)
+handleBrokenNodes [] uid _ _ _ _ _ _ li _ = (uid, [], li)
+handleBrokenNodes (Assign n (AstSymbol f) : AstString a : xs) uid l loc r ls le vt li fns 
     | f `elem` ["renaud","romaric"] = 
-        let (uid', s1, li') = stmtToASM (Assign n (Call (AstSymbol f) [AstString a])) uid l loc r ls le vt li
-            (uid'', s2, li'') = handleBrokenNodes xs uid' l loc r ls le vt li'
+        let (uid', s1, li') = stmtToASM (Assign n (Call (AstSymbol f) [AstString a])) uid l loc r ls le vt li fns
+            (uid'', s2, li'') = handleBrokenNodes xs uid' l loc r ls le vt li' fns
         in (uid'', s1 ++ s2, li'')
-handleBrokenNodes (x:xs) uid l loc r ls le vt li = 
-    let (uid', s1, li') = stmtToASM x uid l loc r ls le vt li
-        (uid'', s2, li'') = handleBrokenNodes xs uid' l loc r ls le vt li'
+handleBrokenNodes (x:xs) uid l loc r ls le vt li fns = 
+    let (uid', s1, li') = stmtToASM x uid l loc r ls le vt li fns
+        (uid'', s2, li'') = handleBrokenNodes xs uid' l loc r ls le vt li' fns
     in (uid'', s1 ++ s2, li'')
 
 
@@ -312,7 +353,6 @@ flattenStringInterp (x:xs) = x : flattenStringInterp xs
 
 buildFormatString :: Map.Map String Type -> [Ast] -> String
 buildFormatString vt (AstString s : xs) = s ++ buildFormatString vt xs
--- Fix: Detect singleton variable calls (e.g. {tmp} or {nom[i]})
 buildFormatString vt (Call (AstSymbol s) [] : xs) = 
     let name = takeWhile (/= '[') s
         isArr = "[" `isInfixOf` s 
