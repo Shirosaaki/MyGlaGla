@@ -3,6 +3,7 @@ module Compiler (compileModuleLLVM, compileToLL, compileToObject) where
 import AST (Ast(..), Type(..))
 import qualified Data.Map.Strict as Map
 import Data.List (isInfixOf)
+import qualified Data.Set as Set
 import System.Process (callCommand)
 import System.IO (hPutStr, stderr)
 import Control.Exception (catch, SomeException(..), displayException)
@@ -112,11 +113,82 @@ compileToObject out ast = catch (do
 
 emitASM :: Ast -> String
 emitASM ast =
-    let varTypes = collectVarTypes ast Map.empty
-        funcNames = collectFunctionNames ast
-        strs = uniqueList (collectStrings ast varTypes) 
+    let ast' = inlineGlobalConsts (collectGlobalConsts ast) ast
+        varTypes = collectVarTypes ast' Map.empty
+        funcNames = collectFunctionNames ast'
+        strs = uniqueList (collectStrings ast' varTypes)
         labels = zip strs [0..]
-    in concatMap (emitData) labels ++ "\n" ++ emitText ast labels varTypes funcNames ++ "\n" ++ builtInFunctions
+    in concatMap (emitData) labels ++ "\n" ++ emitText ast' labels varTypes funcNames ++ "\n" ++ builtInFunctions
+
+collectGlobalConsts :: Ast -> Map.Map String Ast
+collectGlobalConsts = go
+    where
+        go (Block xs) = Map.unions (map go xs)
+        go (Define _ _ (AstLambda _ _)) = Map.empty
+        go (Define n _ v) | isLit v = Map.singleton n v
+        go _ = Map.empty
+
+        isLit (AstInt _) = True
+        isLit (AstChar _) = True
+        isLit _ = False
+
+inlineGlobalConsts :: Map.Map String Ast -> Ast -> Ast
+inlineGlobalConsts consts = goAst 0 Set.empty
+    where
+        goAst :: Int -> Set.Set String -> Ast -> Ast
+        goAst depth shadowed ast0 = case ast0 of
+            AstSymbol s ->
+                if Set.member s shadowed
+                then AstSymbol s
+                else Map.findWithDefault (AstSymbol s) s consts
+
+            AstList xs -> AstList (map (goAst depth shadowed) xs)
+            Block xs -> Block (goBlock depth shadowed xs)
+            Call (AstSymbol f) args -> Call (AstSymbol f) (map (goAst depth shadowed) args)
+            Call f args -> Call (goAst depth shadowed f) (map (goAst depth shadowed) args)
+            Assign n v -> Assign n (goAst depth shadowed v)
+            ArrayAccess a i -> ArrayAccess (goAst depth shadowed a) (goAst depth shadowed i)
+            ArrayAssign n i v -> ArrayAssign n (goAst depth shadowed i) (goAst depth shadowed v)
+            StructFieldAssign obj field v -> StructFieldAssign obj field (goAst depth shadowed v)
+            Return v -> Return (goAst depth shadowed v)
+            IfElse c t e -> IfElse (goAst depth shadowed c) (goAst depth shadowed t) (goAst depth shadowed e)
+            While c b -> While (goAst depth shadowed c) (goAst depth shadowed b)
+            For v coll body -> For v (goAst depth shadowed coll) (goAst depth shadowed body)
+
+            Define n t (AstLambda params body) ->
+                let shadowed' = Set.union shadowed (Set.fromList params)
+                in Define n t (AstLambda params (goAst (depth + 1) shadowed' body))
+            Define n t v -> Define n t (goAst depth shadowed v)
+            AstLambda params body ->
+                let shadowed' = Set.union shadowed (Set.fromList params)
+                in AstLambda params (goAst (depth + 1) shadowed' body)
+
+            -- nodes that do not contain symbol references we care about
+            Struct n fs -> Struct n fs
+            TypedVar n t v -> TypedVar n t (goAst depth shadowed v)
+            Break -> Break
+            Continue -> Continue
+            AstClosure ps b env -> AstClosure ps b env
+            AstVoid -> AstVoid
+            AstString _ -> ast0
+            AstInt _ -> ast0
+            AstFloat _ -> ast0
+            AstBool _ -> ast0
+            AstChar _ -> ast0
+
+        -- Only treat local bindings as shadowing once we're inside a function/lambda.
+        goBlock :: Int -> Set.Set String -> [Ast] -> [Ast]
+        goBlock depth shadowed xs
+            | depth == 0 = map (goAst depth shadowed) xs
+            | otherwise = goSeq shadowed xs
+            where
+                goSeq _ [] = []
+                goSeq sh (stmt:rest) =
+                    let stmt' = goAst depth sh stmt
+                        sh' = case stmt of
+                            Define n _ _ -> Set.insert n sh
+                            _ -> sh
+                    in stmt' : goSeq sh' rest
 
 emitData :: (String, Int) -> String
 emitData (s, i) = ".globl LC" ++ show i ++ "\nLC" ++ show i ++ ": .string \"" ++ escapeASM s ++ "\"\n"

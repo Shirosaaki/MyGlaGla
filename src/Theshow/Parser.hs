@@ -74,6 +74,9 @@ lineComment = (try (string "desnote" >> notFollowedBy (char '\\')) >> void (take
 skipEOL :: Parser ()
 skipEOL = void $ try (many (oneOf " \t") >> optional (char '\r') >> char '\n')
 
+eolOrEof :: Parser ()
+eolOrEof = void (try (optional (char '\r') >> char '\n')) <|> eof
+
 -- ============================================================================
 -- Basic Atoms
 -- ============================================================================
@@ -405,9 +408,29 @@ parseEnum = do
   spaceConsumer
   name <- identifier
   _ <- char ':'
-  -- Capture enum values using indentation awareness
-  values <- try (skipEOL >> parseEnumValuesBlock)
-        <|> (many (oneOf " \t") >> many (identifier <* spaceConsumer))
+  -- Capture enum values:
+  -- - newline + indented block: one identifier per line (common form)
+  -- - inline: values on the same line
+  values <-
+    try (do
+      _ <- many (oneOf " \t")
+      _ <- optional (char '\r')
+      _ <- char '\n'
+      indents <- some (char ' ' <|> char '\t')
+      let indentCount = length indents
+      first <- identifier
+      _ <- many (oneOf " \t")
+      eolOrEof
+      rest <- many $ try $ do
+        lookAhead (count indentCount (char ' ' <|> char '\t'))
+        _ <- count indentCount (char ' ' <|> char '\t')
+        v <- identifier
+        _ <- many (oneOf " \t")
+        eolOrEof
+        return v
+      return (first : rest)
+    )
+    <|> (many (oneOf " \t") >> many (identifier <* spaceConsumer))
   
   -- Transform enum values into Defines: (block (define Val1 0 int) (define Val2 1 int))
   let defs = zipWith (\val idx -> 
@@ -424,13 +447,13 @@ parseEnumValuesBlock = do
   do
       first <- identifier
       _ <- many (char ' ' <|> char '\t')
-      _ <- optional (char '\n')
+      eolOrEof
       rest <- many $ try $ do
         _ <- many (try (many (oneOf " \t")) >> char '\n')
         _ <- count indentCount (char ' ' <|> char '\t')
         id <- identifier
         _ <- many (char ' ' <|> char '\t')
-        _ <- optional (char '\n')
+        eolOrEof
         return id
       return (first : rest)
 
@@ -441,9 +464,29 @@ parseStruct = do
   name <- identifier
   spaceConsumer
   _ <- char ':'
-  -- Use skipEOL to handle potential spaces before newline
-  fields <- try (skipEOL >> parseStructFieldsBlock)
-        <|> (many (oneOf " \t") >> many parseStructField)
+  -- Capture struct fields:
+  -- - newline + indented block: one `field -> type` per line (common form)
+  -- - inline: fields on the same line
+  fields <-
+    try (do
+      _ <- many (oneOf " \t")
+      _ <- optional (char '\r')
+      _ <- char '\n'
+      indents <- some (char ' ' <|> char '\t')
+      let indentCount = length indents
+      first <- parseStructField
+      _ <- many (oneOf " \t")
+      eolOrEof
+      rest <- many $ try $ do
+        lookAhead (count indentCount (char ' ' <|> char '\t'))
+        _ <- count indentCount (char ' ' <|> char '\t')
+        f <- parseStructField
+        _ <- many (oneOf " \t")
+        eolOrEof
+        return f
+      return (first : rest)
+    )
+    <|> (many (oneOf " \t") >> many parseStructField)
   return $ SList ([SSymbol "struct", SSymbol name] ++ fields)
 
 parseStructField :: Parser SExpr
@@ -469,13 +512,13 @@ parseStructFieldsBlockMin minIndent = do
     else do
       first <- parseStructField
       _ <- many (char ' ' <|> char '\t')
-      _ <- optional (char '\n')
+      eolOrEof
       rest <- many $ try $ do
         _ <- many (try (many (oneOf " \t")) >> char '\n')
         _ <- count indentCount (char ' ' <|> char '\t')
         f <- parseStructField
         _ <- many (char ' ' <|> char '\t')
-        _ <- optional (char '\n')
+        eolOrEof
         return f
       return (first : rest)
 
