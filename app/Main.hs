@@ -8,13 +8,14 @@ module Main (main) where
 
 import System.IO (hIsTerminalDevice, stdin, hPutStrLn, stderr)
 import System.Environment (getArgs)
-import System.Exit (die, exitWith, ExitCode(ExitFailure))
+import System.Exit (die, exitWith, ExitCode(ExitFailure, ExitSuccess))
 import System.FilePath (takeExtension)
 import Console (runConsole, runBatch)
 import Parser (parseSExprMultipleEither, setUseLisp)
 import AST (sexprToAST, Ast(..), evalAST, SExpr)
 import Compiler (compileToObject, compileToLL, compileToBytecodeFile)
 import Loader (loadBytecodeFile, disassemble)
+import ELFLoader (loadAndExecuteELF)
 import VM (runVM)
 import qualified VM
 import Control.Monad (when)
@@ -79,17 +80,27 @@ runFileMode path = do
 -- Execute bytecode from .o file
 runVMMode :: FilePath -> IO ()
 runVMMode path = do
-    result <- loadBytecodeFile path
+    -- Try to load and execute as ELF x86-64 object file
+    result <- loadAndExecuteELF path
     case result of
-        Left err -> printError err >>
-                    exitWith (ExitFailure 84)
-        Right instrs -> do
-            let (res, outs) = runVM instrs
-            mapM_ putStrLn outs
-            case res of
-                Left err -> printError ("RUNTIME ERROR: " ++ err) >>
-                            exitWith (ExitFailure 84)
-                Right val -> printVMResult val
+        Right exitCode -> do
+            exitWith (if exitCode == 0 then ExitSuccess else ExitFailure exitCode)
+        Left elfErr -> do
+            -- Fall back to bytecode loader if ELF fails
+            result' <- loadBytecodeFile path
+            case result' of
+                Left byteErr -> do
+                    -- Both failed - show which one made sense
+                    if "ELF" `elem` words elfErr || "magic" `elem` words byteErr
+                        then printError elfErr >> exitWith (ExitFailure 84)
+                        else printError byteErr >> exitWith (ExitFailure 84)
+                Right instrs -> do
+                    let (res, outs) = runVM instrs
+                    mapM_ putStrLn outs
+                    case res of
+                        Left err -> printError ("RUNTIME ERROR: " ++ err) >>
+                                    exitWith (ExitFailure 84)
+                        Right val -> printVMResult val
 
 -- Disassemble .o file
 runDisassembleMode :: FilePath -> IO ()

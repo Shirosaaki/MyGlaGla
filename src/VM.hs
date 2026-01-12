@@ -11,13 +11,20 @@ module VM
   , runVM
   , execBytecode
   , decodeProgram
+  , runELFFile
+  , loadProgramFromELF
+  , initVM
   ) where
 
 import Bytecode
 import Data.Int (Int32)
+import Data.Word (Word8, Word16, Word32)
 import qualified Data.Map.Strict as Map
 import qualified Data.ByteString as BS
 import qualified Bytecode as BC
+import System.IO (hPutStrLn, stderr)
+import Control.Exception (try, SomeException(..))
+import qualified Data.ByteString.Lazy as BSL
 
 -- Runtime values
 data VMValue
@@ -329,3 +336,82 @@ decodeProgram bs = go bs []
                   case decodeInstr rest of
                     Nothing -> Left "Truncated bytecode"
                     Just (instr, rest') -> go rest' (instr : acc)
+
+--------------------------------------------------------------------------------
+-- ELF File Loading
+--------------------------------------------------------------------------------
+
+-- Simplified ELF parsing - extract .text or .glados section
+parseELFSections :: BS.ByteString -> Either String BS.ByteString
+parseELFSections bs
+  | BS.length bs < 52 = Left "ELF file too small"
+  | otherwise =
+      let magic = BS.take 4 bs
+      in if magic /= BS.pack [0x7F, 0x45, 0x4C, 0x46]
+           then Left "Invalid ELF magic number"
+           else extractTextSection bs
+
+-- Extract .text section from ELF
+extractTextSection :: BS.ByteString -> Either String BS.ByteString
+extractTextSection bs =
+  let -- Read section header offset (at offset 32, 4 bytes)
+      sectionHeaderOffset = readWord32LE bs 32
+      -- Read number of sections (at offset 48, 2 bytes)
+      sectionCount = fromIntegral (readWord16LE bs 48)
+      -- Read section header size (at offset 46, 2 bytes)
+      sectionHeaderSize = fromIntegral (readWord16LE bs 46)
+  in searchSections bs sectionHeaderOffset sectionCount sectionHeaderSize 0
+
+-- Search for .text section
+searchSections :: BS.ByteString -> Word32 -> Int -> Int -> Int -> Either String BS.ByteString
+searchSections bs offset count headerSize idx
+  | idx >= count = Left "No .text section found in ELF"
+  | otherwise =
+      let sectionOffset = fromIntegral offset + (idx * headerSize)
+          -- Section offset is at +32 in section header
+          sectDataOffset = fromIntegral (readWord32LE bs (sectionOffset + 32))
+          -- Section size is at +36 in section header
+          sectSize = fromIntegral (readWord32LE bs (sectionOffset + 36))
+      in if sectDataOffset > 0 && sectSize > 0 && sectDataOffset + sectSize <= BS.length bs
+           then Right (BS.take sectSize (BS.drop sectDataOffset bs))
+           else searchSections bs offset count headerSize (idx + 1)
+
+-- Read 32-bit little-endian word from ByteString at offset
+readWord32LE :: BS.ByteString -> Int -> Word32
+readWord32LE bs offset
+  | offset + 4 > BS.length bs = 0
+  | otherwise =
+      let bytes = BS.unpack (BS.take 4 (BS.drop offset bs))
+      in fromIntegral (bytes !! 0) +
+         fromIntegral (bytes !! 1) * 256 +
+         fromIntegral (bytes !! 2) * 65536 +
+         fromIntegral (bytes !! 3) * 16777216
+
+-- Read 16-bit little-endian word from ByteString at offset
+readWord16LE :: BS.ByteString -> Int -> Word16
+readWord16LE bs offset
+  | offset + 2 > BS.length bs = 0
+  | otherwise =
+      let bytes = BS.unpack (BS.take 2 (BS.drop offset bs))
+      in fromIntegral (bytes !! 0) +
+         fromIntegral (bytes !! 1) * 256
+
+-- Load program from ELF file
+loadProgramFromELF :: FilePath -> IO (Either String [Instruction])
+loadProgramFromELF filePath = do
+  result <- try (BS.readFile filePath) :: IO (Either SomeException BS.ByteString)
+  case result of
+    Left err -> return $ Left ("Failed to read ELF file: " ++ show err)
+    Right fileContent -> do
+      case parseELFSections fileContent of
+        Left err -> return $ Left ("Failed to parse ELF: " ++ err)
+        Right bytecodeSection -> 
+          return $ decodeProgram bytecodeSection
+
+-- Execute ELF file and return result
+runELFFile :: FilePath -> IO (Either String VMValue, [String])
+runELFFile filePath = do
+  progResult <- loadProgramFromELF filePath
+  case progResult of
+    Left err -> return (Left err, [])
+    Right instructions -> return $ runVM instructions
