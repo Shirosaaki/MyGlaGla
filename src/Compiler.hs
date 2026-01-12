@@ -1,4 +1,4 @@
-module Compiler (compileModuleLLVM, compileToLL, compileToObject) where
+module Compiler (compileModuleLLVM, compileToLL, compileToObject, compileToBytecodeFile) where -- Ajoutez compileToBytecodeFile aux exports
 
 import AST (Ast(..), Type(..))
 import qualified Data.Map.Strict as Map
@@ -11,6 +11,9 @@ import System.Exit (exitFailure)
 import qualified Control.Exception as E
 import UI (printError)
 import System.IO.Unsafe (unsafePerformIO)
+import Bytecode (Instruction(..))
+import qualified Bytecode as BC -- Ajout pour disambiguer LT/EQ
+import Loader (saveBytecodeFile)
 
 -- =============================================================================
 -- Configuration
@@ -634,3 +637,27 @@ builtInFunctions = unlines
     , ".LC_w_mode: .string \"w\""
     , ".LC_s_fmt: .string \"%s\""
     ]
+
+-- =============================================================================
+-- Bytecode Compilation (VM)
+-- =============================================================================
+
+compileToBytecodeFile :: FilePath -> Ast -> IO ()
+compileToBytecodeFile path ast = do
+    let instrs = astToInstructions ast ++ [HALT]
+    saveBytecodeFile path instrs
+
+astToInstructions :: Ast -> [Instruction]
+astToInstructions (AstInt n) = [PUSH (fromIntegral n)]
+astToInstructions (AstBool True) = [PUSH_TRUE]
+astToInstructions (AstBool False) = [PUSH_FALSE]
+-- Correction : AstCall n'existe pas, on utilise Call (AstSymbol "+")
+astToInstructions (Call (AstSymbol "+") [a, b]) = astToInstructions a ++ astToInstructions b ++ [ADD]
+astToInstructions (Call (AstSymbol "-") [a, b]) = astToInstructions a ++ astToInstructions b ++ [SUB]
+astToInstructions (Call (AstSymbol "*") [a, b]) = astToInstructions a ++ astToInstructions b ++ [MUL]
+astToInstructions (Call (AstSymbol "/") [a, b]) = astToInstructions a ++ astToInstructions b ++ [DIV]
+-- Correction : Utilisation de BC.LT et BC.EQ pour éviter le conflit avec Prelude
+astToInstructions (Call (AstSymbol "<") [a, b]) = astToInstructions a ++ astToInstructions b ++ [BC.LT]
+astToInstructions (Call (AstSymbol "==") [a, b]) = astToInstructions a ++ astToInstructions b ++ [BC.EQ]
+astToInstructions (Block exprs) = concatMap astToInstructions exprs
+astToInstructions _ = [] -- Ajoutez ici d'autres cas (variables, etc.)

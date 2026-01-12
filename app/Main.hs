@@ -13,7 +13,7 @@ import System.FilePath (takeExtension)
 import Console (runConsole, runBatch)
 import Parser (parseSExprMultipleEither, setUseLisp)
 import AST (sexprToAST, Ast(..), evalAST, SExpr)
-import Compiler (compileToObject, compileToLL)
+import Compiler (compileToObject, compileToLL, compileToBytecodeFile)
 import Loader (loadBytecodeFile, disassemble)
 import VM (runVM)
 import qualified VM
@@ -30,12 +30,13 @@ main = getArgs >>= \rawArgs -> do
 dispatch :: [String] -> IO ()
 dispatch ["-S", llOut] = compileFromStdin (compileToLL llOut)
 dispatch ["-c", objOut] = compileFromStdin (compileToObject objOut)
+dispatch ["-B", byteOut] = compileFromStdin (compileToBytecodeFile byteOut) -- Nouvelle option
 dispatch ["-d", file] = runDisassembleMode file  -- Disassemble VM bytecode
 dispatch [file] 
     | takeExtension file == ".o" = runVMMode file  -- Execute VM bytecode
     | otherwise = runFileMode file  -- Execute source file
 dispatch [] = runInteractive
-dispatch _ = die "Usage: glados [-l] [-S out.ll | -c out.o | -d file.o | file.o | file.scm]"
+dispatch _ = die "Usage: glados [-l] [-S out.ll | -c out.o | -B out.byte | -d file.o | file.o | file.scm]"
 
 runInteractive :: IO ()
 runInteractive = do
