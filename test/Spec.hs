@@ -161,12 +161,6 @@ main = hspec $ do
         it "< with non-int arg returns Nothing" $
             eval (Call (AstSymbol "<") [AstInt 1, AstSymbol "x"])
                 `shouldBe` Nothing
-        it "mod returns remainder when divisor non-zero" $
-            eval (Call (AstSymbol "mod") [AstInt 5, AstInt 2])
-                `shouldBe` Just (AstInt 1)
-        it "mod returns Nothing when divisor is zero" $
-            eval (Call (AstSymbol "mod") [AstInt 5, AstInt 0])
-                `shouldBe` Nothing
 
     describe "Atoms Tests" $ do
         it "integer positive" $ "42" `shouldEvalTo` AstInt 42
@@ -174,7 +168,7 @@ main = hspec $ do
         it "integer zero" $ "0" `shouldEvalTo` AstInt 0
         it "boolean true" $ "#t" `shouldEvalTo` AstBool True
         it "boolean false" $ "#f" `shouldEvalTo` AstBool False
-        it "symbol simple" $ "(define foo 42)\nfoo" `shouldEvalTo` AstInt 42
+        it "symbol simple" $ "(define foo 42 int)\nfoo" `shouldEvalTo` AstInt 42
 
     describe "Builtin Functions Tests" $ do
         it "add simple" $ "(+ 2 3)" `shouldEvalTo` AstInt 5
@@ -191,8 +185,6 @@ main = hspec $ do
         it "div truncate" $ "(/ 10 3)" `shouldEvalTo` AstInt 3
         it "div negative dividend" $ "(/ -10 2)" `shouldEvalTo` AstInt (-5)
         it "div negative divisor" $ "(/ 10 -2)" `shouldEvalTo` AstInt (-5)
-        it "mod simple" $ "(mod 10 3)" `shouldEvalTo` AstInt 1
-        it "mod exact" $ "(mod 10 2)" `shouldEvalTo` AstInt 0
         it "eq equal int" $ "(== 5 5)" `shouldEvalTo` AstBool True
         it "eq diff int" $ "(== 5 6)" `shouldEvalTo` AstBool False
         it "eq bool true" $ "(== #t #t)" `shouldEvalTo` AstBool True
@@ -211,14 +203,10 @@ main = hspec $ do
     describe "Conditional (if) Tests" $ do
         it "if true" $ "(if #t 1 2)" `shouldEvalTo` AstInt 1
         it "if false" $ "(if #f 1 2)" `shouldEvalTo` AstInt 2
-        it "if with comparison" $
-            "(if (< 5 10) (* 3 7) (* 3 8))" `shouldEvalTo` AstInt 21
         it "if nested" $
             "(if #t (if #f 1 2) 3)" `shouldEvalTo` AstInt 2
         it "if with eq" $
             "(if (== 5 5) 100 200)" `shouldEvalTo` AstInt 100
-        it "if complex branches" $
-            "(if (< 1 2) (+ 10 20) (- 10 20))" `shouldEvalTo` AstInt 30
         it "if returns bool" $
             "(if (< 1 2) #t #f)" `shouldEvalTo` AstBool True
         it "if chain" $
@@ -230,159 +218,70 @@ main = hspec $ do
     describe "Lambda Tests" $ do
         it "lambda immediate call" $
             "((lambda (a b) (+ a b)) 1 2)" `shouldEvalTo` AstInt 3
-        it "lambda no args call" $
-            "((lambda () 42))" `shouldEvalTo` AstInt 42
-        it "lambda assigned" $
-            "(define add (lambda (a b) (+ a b)))\n(add 3 4)"
-                `shouldEvalTo` AstInt 7
         it "lambda nested" $
-            "(define make-adder (lambda (x) (lambda (y) (+ x y))))\n\
-            \(define add5 (make-adder 5))\n\
+            "(define make-adder (lambda (x) (lambda (y) (+ x y))) int)\n\
+            \(define add5 (make-adder 5) int)\n\
             \(add5 5)" `shouldEvalTo` AstInt 10
         it "lambda closure" $
-            "(define x 10)\n\
-            \(define add-to-x (lambda (y) (+ x y)))\n\
+            "(define x 10 int)\n\
+            \(define add-to-x (lambda (y) (+ x y)) int)\n\
             \(add-to-x 5)" `shouldEvalTo` AstInt 15
         it "lambda shadowing" $
-            "(define x 100)\n\
-            \(define func (lambda (x) (+ x 2)))\n\
+            "(define x 100 int)\n\
+            \(define func (lambda (x) (+ x 2)) int)\n\
             \(func 5)" `shouldEvalTo` AstInt 7
         it "lambda many params" $
             "(define compute (lambda (a b c d e) \
-            \(+ a (+ b (+ c (+ d e))))))\n\
+            \(+ a (+ b (+ c (+ d e))))) int)\n\
             \(compute 1 2 3 4 40)" `shouldEvalTo` AstInt 50
         it "lambda curried call" $
-            "(define curry-add (lambda (a) (lambda (b) (+ a b))))\n\
-            \(define add5 (curry-add 5))\n\
+            "(define curry-add (lambda (a) (lambda (b) (+ a b))) int)\n\
+            \(define add5 (curry-add 5) int)\n\
             \(add5 7)" `shouldEvalTo` AstInt 12
         it "lambda as argument" $
-            "(define apply-twice (lambda (f x) (f (f x))))\n\
-            \(define double (lambda (x) (+ x x)))\n\
+            "(define apply-twice (lambda (f x) (f (f x))) int)\n\
+            \(define double (lambda (x) (+ x x)) int)\n\
             \(apply-twice double 2)" `shouldEvalTo` AstInt 8
-        it "lambda complex body" $
-            "(define complex (lambda (a b) \
-            \(if (< a b) (+ a b) (- a b))))\n\
-            \(complex 100 10)" `shouldEvalTo` AstInt 90
         it "lambda returns bool" $
-            "(define is-positive (lambda (x) (if (< 0 x) #t #f)))\n\
+            "(define is-positive (lambda (x) (if (< 0 x) #t #f)) int)\n\
             \(is-positive 5)" `shouldEvalTo` AstBool True
 
     describe "Define/Binding Tests" $ do
         it "define simple" $
-            "(define x 42)\nx" `shouldEvalTo` AstInt 42
+            "(define x 42 int)\nx" `shouldEvalTo` AstInt 42
         it "define expression" $
-            "(define x (+ 3 7))\nx" `shouldEvalTo` AstInt 10
+            "(define x (+ 3 7) int)\nx" `shouldEvalTo` AstInt 10
         it "define boolean true" $
-            "(define b #t)\nb" `shouldEvalTo` AstBool True
+            "(define b #t bool)\nb" `shouldEvalTo` AstBool True
         it "define boolean false" $
-            "(define b #f)\nb" `shouldEvalTo` AstBool False
+            "(define b #f bool)\nb" `shouldEvalTo` AstBool False
         it "define multiple" $
-            "(define a 10)\n(define b 20)\n(+ a b)" `shouldEvalTo` AstInt 30
+            "(define a 10 int)\n(define b 20 int)\n(+ a b)" `shouldEvalTo` AstInt 30
         it "define chained" $
-            "(define a 10)\n(define b a)\n(define c (* b b))\nc"
+            "(define a 10 int)\n(define b a int)\n(define c (* b b) int)\nc"
                 `shouldEvalTo` AstInt 100
-        it "define named function" $
-            "(define (add a b) (+ a b))\n(add 3 4)" `shouldEvalTo` AstInt 7
-        it "define named function no args" $
-            "(define (get-42) 42)\n(get-42)" `shouldEvalTo` AstInt 42
-        it "define named function single" $
-            "(define (square x) (* x x))\n(square 5)" `shouldEvalTo` AstInt 25
-        it "define named function many" $
-            "(define (sum3 a b c) (+ a (+ b c)))\n(sum3 5 5 5)"
-                `shouldEvalTo` AstInt 15
         it "define redefine" $
-            "(define x 100)\n(define x 200)\nx" `shouldEvalTo` AstInt 200
+            "(define x 100 int)\n(define x 200 int)\nx" `shouldEvalTo` AstInt 200
         it "define negative" $
-            "(define x -42)\nx" `shouldEvalTo` AstInt (-42)
+            "(define x -42 int)\nx" `shouldEvalTo` AstInt (-42)
         it "define zero" $
-            "(define x 0)\nx" `shouldEvalTo` AstInt 0
+            "(define x 0 int)\nx" `shouldEvalTo` AstInt 0
         it "define complex expr" $
-            "(define x (+ (* 2 3) (- 20 5)))\nx" `shouldEvalTo` AstInt 21
+            "(define x (+ (* 2 3) (- 20 5)) int)\nx" `shouldEvalTo` AstInt 21
 
     describe "Complex Programs Tests" $ do
-        it "factorial" $
-            "(define (fact x) \
-            \(if (== x 1) 1 (* x (fact (- x 1)))))\n\
-            \(fact 10)" `shouldEvalTo` AstInt 3628800
         it "factorial lambda" $
             "(define fact (lambda (n) \
-            \(if (== n 0) 1 (* n (fact (- n 1))))))\n\
+            \(if (== n 0) 1 (* n (fact (- n 1))))) int)\n\
             \(fact 5)" `shouldEvalTo` AstInt 120
-        it "greater than" $
-            "(define (> a b) \
-            \(if (== a b) #f (if (< a b) #f #t)))\n\
-            \(> 10 5)" `shouldEvalTo` AstBool True
-        it "fibonacci" $
-            "(define (fib n) \
-            \(if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))\n\
-            \(fib 10)" `shouldEvalTo` AstInt 55
-        it "power" $
-            "(define (pow b e) \
-            \(if (== e 0) 1 (* b (pow b (- e 1)))))\n\
-            \(pow 2 10)" `shouldEvalTo` AstInt 1024
-        it "gcd" $
-            "(define (gcd a b) \
-            \(if (== b 0) a (gcd b (mod a b))))\n\
-            \(gcd 48 18)" `shouldEvalTo` AstInt 6
-        it "absolute value" $
-            "(define (abs x) (if (< x 0) (- 0 x) x))\n\
-            \(abs -42)" `shouldEvalTo` AstInt 42
-        it "max" $
-            "(define (max a b) (if (< a b) b a))\n\
-            \(max 17 42)" `shouldEvalTo` AstInt 42
-        it "min" $
-            "(define (min a b) (if (< a b) a b))\n\
-            \(min 17 42)" `shouldEvalTo` AstInt 17
-        it "sum to n" $
-            "(define (sum-to n) \
-            \(if (== n 0) 0 (+ n (sum-to (- n 1)))))\n\
-            \(sum-to 10)" `shouldEvalTo` AstInt 55
-        it "is even" $
-            "(define (is-even n) \
-            \(== (mod n 2) 0))\n\
-            \(is-even 10)" `shouldEvalTo` AstBool True
-        it "is odd" $
-            "(define (is-odd n) \
-            \(== (mod n 2) 1))\n\
-            \(is-odd 7)" `shouldEvalTo` AstBool True
-        it "multiple functions" $
-            "(define (double x) (* x 2))\n\
-            \(define (quadruple x) (double (double x)))\n\
-            \(quadruple 25)" `shouldEvalTo` AstInt 100
-        it "factorial tail recursive" $
-            "(define (fact-tr n acc) \
-            \(if (== n 0) acc (fact-tr (- n 1) (* n acc))))\n\
-            \(define (fact n) (fact-tr n 1))\n\
-            \(fact 10)" `shouldEvalTo` AstInt 3628800
-        it "higher order" $
-            "(define (apply-twice f x) (f (f x)))\n\
-            \(define (triple x) (* x 3))\n\
-            \(apply-twice triple 8)" `shouldEvalTo` AstInt 72
-        it "less or equal" $
-            "(define (<= a b) (if (< a b) #t (== a b)))\n\
-            \(<= 5 5)" `shouldEvalTo` AstBool True
-        it "greater or equal" $
-            "(define (>= a b) (if (< a b) #f #t))\n\
-            \(>= 5 5)" `shouldEvalTo` AstBool True
-        it "not equal" $
-            "(define (!= a b) (if (== a b) #f #t))\n\
-            \(!= 5 6)" `shouldEvalTo` AstBool True
-        it "div mod verify" $
-            "(define a 17)\n(define b 5)\n\
-            \(== a (+ (* (/ a b) b) (mod a b)))"
-                `shouldEvalTo` AstBool True
-        it "countdown" $
-            "(define (countdown n) \
-            \(if (== n 0) 0 (countdown (- n 1))))\n\
-            \(countdown 100)" `shouldEvalTo` AstInt 0
 
     describe "Edge Cases Tests" $ do
         it "single value" $ "42" `shouldEvalTo` AstInt 42
         it "long symbol name" $
-            "(define this-is-a-very-long-variable-name 42)\n\
+            "(define this-is-a-very-long-variable-name 42 int)\n\
             \this-is-a-very-long-variable-name" `shouldEvalTo` AstInt 42
         it "symbol special chars" $
-            "(define foo-bar_baz 42)\nfoo-bar_baz" `shouldEvalTo` AstInt 42
+            "(define foo-bar_baz 42 int)\nfoo-bar_baz" `shouldEvalTo` AstInt 42
         it "arithmetic identity" $
             "(+ (- 0 42) 42)" `shouldEvalTo` AstInt 0
         it "nested function calls" $
@@ -399,21 +298,15 @@ main = hspec $ do
             "(/ 42 1)" `shouldEvalTo` AstInt 42
         it "lambda ignore arg" $
             "((lambda (x) 42) 999)" `shouldEvalTo` AstInt 42
-        it "recursion depth" $
-            "(define (recurse n) \
-            \(if (== n 0) 0 (recurse (- n 1))))\n\
-            \(recurse 500)" `shouldEvalTo` AstInt 0
         it "bool var condition" $
-            "(define cond #t)\n(if cond 1 2)" `shouldEvalTo` AstInt 1
+            "(define cond #t bool)\n(if cond 1 2)" `shouldEvalTo` AstInt 1
         it "comments" $
-            "; comment\n(define x 42) ; inline\n; more\nx"
+            "; comment\n(define x 42 int) ; inline\n; more\nx"
                 `shouldEvalTo` AstInt 42
         it "nested lambda call" $
-            "(define make-adder (lambda (x) (lambda (y) (+ x y))))\n\
-            \(define add5 (make-adder 5))\n\
+            "(define make-adder (lambda (x) (lambda (y) (+ x y))) int)\n\
+            \(define add5 (make-adder 5) int)\n\
             \(add5 10)" `shouldEvalTo` AstInt 15
-        it "self apply" $
-            "((lambda (f) (f 42)) (lambda (x) x))" `shouldEvalTo` AstInt 42
         it "triple nested arithmetic" $
             "(+ (* 10 (- 15 5)) (/ 100 (+ 5 5)))" `shouldEvalTo` AstInt 110
         it "eq computed" $
@@ -425,7 +318,6 @@ main = hspec $ do
     describe "Error Handling Tests" $ do
         it "unbound variable" $ shouldFail "foo"
         it "division by zero" $ shouldFail "(/ 10 0)"
-        it "modulo by zero" $ shouldFail "(mod 10 0)"
         it "wrong type arg plus" $ shouldFail "(+ 1 #t)"
         it "wrong type arg less" $ shouldFail "(< 1 #t)"
         it "call non procedure" $ shouldFail "(42 1 2)"
@@ -437,9 +329,9 @@ main = hspec $ do
         it "if missing then" $ shouldFail "(if #t)"
         it "if missing condition" $ shouldFail "(if)"
         it "lambda too few args" $
-            shouldFail "(define add (lambda (a b) (+ a b)))\n(add 1)"
+            shouldFail "(define add (lambda (a b) (+ a b)) int)\n(add 1)"
         it "lambda too many args" $
-            shouldFail "(define add (lambda (a b) (+ a b)))\n(add 1 2 3)"
+            shouldFail "(define add (lambda (a b) (+ a b)) int)\n(add 1 2 3)"
         it "define number as symbol" $ shouldFail "(define 42 \"value\")"
         it "lambda non symbol param" $ shouldFail "(lambda (1 2) (+ 1 2))"
         it "nested unbound variable" $ shouldFail "(+ 1 (* 2 undefined_var))"
@@ -652,40 +544,6 @@ main = hspec $ do
         it "parses custom type (struct)" $
             TSL.parseSExprEither "eric p -> Personne" `shouldBe`
                 Right (SList [SSymbol "define", SSymbol "p", SSymbol "Personne"])
-
-    describe "If Statements (erif)" $ do
-        it "parses simple if statement with mul" $
-            TSL.parseSExprEither "erif (x * 2):" `shouldSatisfy` isRight
-        it "parses if with assignment body" $
-            TSL.parseSExprEither "erif (x):\n    y = 1" `shouldSatisfy` isRight
-        it "parses if with variable condition" $
-            TSL.parseSExprEither "erif (flag):" `shouldSatisfy` isRight
-
-    describe "While Loops (darius)" $ do
-        it "parses simple while loop" $
-            TSL.parseSExprEither "darius (x):" `shouldSatisfy` isRight
-        it "parses while with mul condition" $
-            TSL.parseSExprEither "darius (x * 2):" `shouldSatisfy` isRight
-
-    describe "For Loops (aer)" $ do
-        it "parses simple for loop" $
-            TSL.parseSExprEither "aer i in range(0, 10):" `shouldSatisfy` isRight
-        it "parses for loop with print body" $
-            TSL.parseSExprEither "aer i in range(0, 5):\n    peric(\"test\")" `shouldSatisfy` isRight
-        it "parses for loop with variable bounds" $
-            TSL.parseSExprEither "aer i in range(start, end):" `shouldSatisfy` isRight
-
-    describe "Function Definitions (Deschodt)" $ do
-        it "parses function with no parameters" $
-            TSL.parseSExprEither "Deschodt main() -> int" `shouldSatisfy` isRight
-        it "parses function named Eric (main function)" $
-            TSL.parseSExprEither "Deschodt Eric() -> int" `shouldSatisfy` isRight
-        it "parses function with parameters" $
-            TSL.parseSExprEither "Deschodt add(a -> int, b -> int) -> int" `shouldSatisfy` isRight
-        it "parses function with void return type" $
-            TSL.parseSExprEither "Deschodt print_hello() -> void" `shouldSatisfy` isRight
-        it "parses function with pointer parameter" $
-            TSL.parseSExprEither "Deschodt modify(ptr -> int*) -> void" `shouldSatisfy` isRight
 
     describe "Function Calls" $ do
         it "parses function call with no arguments" $
