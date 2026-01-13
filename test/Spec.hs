@@ -8,6 +8,8 @@ import Test.Hspec
 import Lib (SExpr(..), Ast(..), sexprToAST, evalAST,
             parseSExprMultipleEither, defName, defValue)
 import qualified Theshow.Parser as TSL
+import qualified Lisp.Parser as Lisp
+import qualified Parser
 import qualified Paths_glados as P
 import Data.Version (showVersion)
 import Data.List (isSuffixOf)
@@ -22,9 +24,9 @@ eval a = case evalAST [] a of
     Right (res, _) -> Just res
     Left _ -> Nothing
 
--- Parse and evaluate a program string, returning the result
+-- Parse and evaluate a program string, returning the result (using Lisp parser)
 runProgram :: String -> Either String Ast
-runProgram input = case parseSExprMultipleEither input of
+runProgram input = case Lisp.parseSExprMultipleEither input of
     Left err -> Left err
     Right sexprs -> evalProgram [] sexprs
 
@@ -55,21 +57,21 @@ main = hspec $ do
             sexprToAST (SSymbol "foo") `shouldBe` Right (AstSymbol "foo")
         it "converts SList [] to AstList []" $
             sexprToAST (SList []) `shouldBe` Right (AstList [])
-        it "converts define form" $
+        it "converts define form (without type becomes a Call)" $
             sexprToAST (SList [SSymbol "define", SSymbol "x", SInt 1])
-                `shouldBe` Right (Define "x" Nothing (AstInt 1))
-        it "returns Left for malformed define" $
+                `shouldBe` Right (Call (AstSymbol "define") [AstSymbol "x", AstInt 1])
+        it "converts define with only name (as call)" $
             sexprToAST (SList [SSymbol "define", SSymbol "x"])
-                `shouldSatisfy` isLeft
+                `shouldBe` Right (Call (AstSymbol "define") [AstSymbol "x"])
         it "converts function call" $
             sexprToAST (SList [SSymbol "+", SInt 1, SInt 2])
                 `shouldBe` Right (Call (AstSymbol "+") [AstInt 1, AstInt 2])
         it "allows non-symbol function position" $
             sexprToAST (SList [SInt 1, SInt 2])
                 `shouldBe` Right (Call (AstInt 1) [AstInt 2])
-        it "returns Left when define name is not a symbol" $
+        it "converts define when name is not a symbol (becomes Call)" $
             sexprToAST (SList [SSymbol "define", SInt 1, SInt 2])
-                `shouldSatisfy` isLeft
+                `shouldBe` Right (Call (AstSymbol "define") [AstInt 1, AstInt 2])
         it "converts SBool to AstBool" $
             sexprToAST (SBool True) `shouldBe` Right (AstBool True)
 
@@ -94,10 +96,10 @@ main = hspec $ do
             eval (Call (AstSymbol "-") [AstInt 5, AstInt 2])
                 `shouldBe` Just (AstInt 3)
         it "evaluates division" $
-            eval (Call (AstSymbol "div") [AstInt 8, AstInt 2])
+            eval (Call (AstSymbol "/") [AstInt 8, AstInt 2])
                 `shouldBe` Just (AstInt 4)
         it "returns Nothing for division by zero" $
-            eval (Call (AstSymbol "div") [AstInt 8, AstInt 0])
+            eval (Call (AstSymbol "/") [AstInt 8, AstInt 0])
                 `shouldBe` Nothing
         it "returns Nothing for non-int args" $
             eval (Call (AstSymbol "+") [AstSymbol "foo"]) `shouldBe` Nothing
@@ -117,12 +119,12 @@ main = hspec $ do
             eval (Call (AstSymbol "-") [AstInt 10, AstInt 2, AstInt 3])
                 `shouldBe` Just (AstInt 5)
         it "division with multiple args" $
-            eval (Call (AstSymbol "div") [AstInt 24, AstInt 2, AstInt 3])
+            eval (Call (AstSymbol "/") [AstInt 24, AstInt 2, AstInt 3])
                 `shouldBe` Just (AstInt 4)
         it "subtraction with single arg returns the arg" $
             eval (Call (AstSymbol "-") [AstInt 5]) `shouldBe` Just (AstInt 5)
         it "division with no args returns Nothing" $
-            eval (Call (AstSymbol "div") []) `shouldBe` Nothing
+            eval (Call (AstSymbol "/") []) `shouldBe` Nothing
         it "unknown operator returns Nothing" $
             eval (Call (AstSymbol "foo") [AstInt 1, AstInt 2])
                 `shouldBe` Nothing
@@ -133,11 +135,11 @@ main = hspec $ do
                 `shouldBe` Nothing
 
     describe "Predicates and if" $ do
-        it "eq? returns true for equal ints" $
-            eval (Call (AstSymbol "eq?") [AstInt 1, AstInt 1])
+        it "== returns true for equal ints" $
+            eval (Call (AstSymbol "==") [AstInt 1, AstInt 1])
                 `shouldBe` Just (AstBool True)
-        it "eq? returns false for different ints" $
-            eval (Call (AstSymbol "eq?") [AstInt 1, AstInt 2])
+        it "== returns false for different ints" $
+            eval (Call (AstSymbol "==") [AstInt 1, AstInt 2])
                 `shouldBe` Just (AstBool False)
         it "< returns true when first < second" $
             eval (Call (AstSymbol "<") [AstInt 1, AstInt 2])
@@ -154,8 +156,8 @@ main = hspec $ do
         it "if returns Nothing for non-bool condition" $
             eval (Call (AstSymbol "if") [AstInt 1, AstInt 1, AstInt 2])
                 `shouldBe` Nothing
-        it "eq? with wrong arity returns Nothing" $
-            eval (Call (AstSymbol "eq?") [AstInt 1]) `shouldBe` Nothing
+        it "== with wrong arity returns Nothing" $
+            eval (Call (AstSymbol "==") [AstInt 1]) `shouldBe` Nothing
         it "< with non-int arg returns Nothing" $
             eval (Call (AstSymbol "<") [AstInt 1, AstSymbol "x"])
                 `shouldBe` Nothing
@@ -185,18 +187,18 @@ main = hspec $ do
         it "mul negative" $ "(* 2 -3)" `shouldEvalTo` AstInt (-6)
         it "mul zero" $ "(* 5 0)" `shouldEvalTo` AstInt 0
         it "mul two negatives" $ "(* -2 -3)" `shouldEvalTo` AstInt 6
-        it "div simple" $ "(div 10 2)" `shouldEvalTo` AstInt 5
-        it "div truncate" $ "(div 10 3)" `shouldEvalTo` AstInt 3
-        it "div negative dividend" $ "(div -10 2)" `shouldEvalTo` AstInt (-5)
-        it "div negative divisor" $ "(div 10 -2)" `shouldEvalTo` AstInt (-5)
+        it "div simple" $ "(/ 10 2)" `shouldEvalTo` AstInt 5
+        it "div truncate" $ "(/ 10 3)" `shouldEvalTo` AstInt 3
+        it "div negative dividend" $ "(/ -10 2)" `shouldEvalTo` AstInt (-5)
+        it "div negative divisor" $ "(/ 10 -2)" `shouldEvalTo` AstInt (-5)
         it "mod simple" $ "(mod 10 3)" `shouldEvalTo` AstInt 1
         it "mod exact" $ "(mod 10 2)" `shouldEvalTo` AstInt 0
-        it "eq equal int" $ "(eq? 5 5)" `shouldEvalTo` AstBool True
-        it "eq diff int" $ "(eq? 5 6)" `shouldEvalTo` AstBool False
-        it "eq bool true" $ "(eq? #t #t)" `shouldEvalTo` AstBool True
-        it "eq bool false" $ "(eq? #f #f)" `shouldEvalTo` AstBool True
-        it "eq diff bool" $ "(eq? #t #f)" `shouldEvalTo` AstBool False
-        it "eq expressions" $ "(eq? (+ 1 2) (- 5 2))" `shouldEvalTo` AstBool True
+        it "eq equal int" $ "(== 5 5)" `shouldEvalTo` AstBool True
+        it "eq diff int" $ "(== 5 6)" `shouldEvalTo` AstBool False
+        it "eq bool true" $ "(== #t #t)" `shouldEvalTo` AstBool True
+        it "eq bool false" $ "(== #f #f)" `shouldEvalTo` AstBool True
+        it "eq diff bool" $ "(== #t #f)" `shouldEvalTo` AstBool False
+        it "eq expressions" $ "(== (+ 1 2) (- 5 2))" `shouldEvalTo` AstBool True
         it "less true" $ "(< 1 5)" `shouldEvalTo` AstBool True
         it "less false" $ "(< 5 1)" `shouldEvalTo` AstBool False
         it "less equal" $ "(< 5 5)" `shouldEvalTo` AstBool False
@@ -204,7 +206,7 @@ main = hspec $ do
         it "less expressions" $ "(< (+ 3 2) (- 3 2))" `shouldEvalTo` AstBool False
         it "nested arithmetic" $ "(+ 1 (* 2 (- 10 5)))" `shouldEvalTo` AstInt 11
         it "complex arithmetic" $
-            "(+ (* 6 7) (- 10 (div 20 4)))" `shouldEvalTo` AstInt 47
+            "(+ (* 6 7) (- 10 (/ 20 4)))" `shouldEvalTo` AstInt 47
 
     describe "Conditional (if) Tests" $ do
         it "if true" $ "(if #t 1 2)" `shouldEvalTo` AstInt 1
@@ -214,7 +216,7 @@ main = hspec $ do
         it "if nested" $
             "(if #t (if #f 1 2) 3)" `shouldEvalTo` AstInt 2
         it "if with eq" $
-            "(if (eq? 5 5) 100 200)" `shouldEvalTo` AstInt 100
+            "(if (== 5 5) 100 200)" `shouldEvalTo` AstInt 100
         it "if complex branches" $
             "(if (< 1 2) (+ 10 20) (- 10 20))" `shouldEvalTo` AstInt 30
         it "if returns bool" $
@@ -300,15 +302,15 @@ main = hspec $ do
     describe "Complex Programs Tests" $ do
         it "factorial" $
             "(define (fact x) \
-            \(if (eq? x 1) 1 (* x (fact (- x 1)))))\n\
+            \(if (== x 1) 1 (* x (fact (- x 1)))))\n\
             \(fact 10)" `shouldEvalTo` AstInt 3628800
         it "factorial lambda" $
             "(define fact (lambda (n) \
-            \(if (eq? n 0) 1 (* n (fact (- n 1))))))\n\
+            \(if (== n 0) 1 (* n (fact (- n 1))))))\n\
             \(fact 5)" `shouldEvalTo` AstInt 120
         it "greater than" $
             "(define (> a b) \
-            \(if (eq? a b) #f (if (< a b) #f #t)))\n\
+            \(if (== a b) #f (if (< a b) #f #t)))\n\
             \(> 10 5)" `shouldEvalTo` AstBool True
         it "fibonacci" $
             "(define (fib n) \
@@ -316,11 +318,11 @@ main = hspec $ do
             \(fib 10)" `shouldEvalTo` AstInt 55
         it "power" $
             "(define (pow b e) \
-            \(if (eq? e 0) 1 (* b (pow b (- e 1)))))\n\
+            \(if (== e 0) 1 (* b (pow b (- e 1)))))\n\
             \(pow 2 10)" `shouldEvalTo` AstInt 1024
         it "gcd" $
             "(define (gcd a b) \
-            \(if (eq? b 0) a (gcd b (mod a b))))\n\
+            \(if (== b 0) a (gcd b (mod a b))))\n\
             \(gcd 48 18)" `shouldEvalTo` AstInt 6
         it "absolute value" $
             "(define (abs x) (if (< x 0) (- 0 x) x))\n\
@@ -333,15 +335,15 @@ main = hspec $ do
             \(min 17 42)" `shouldEvalTo` AstInt 17
         it "sum to n" $
             "(define (sum-to n) \
-            \(if (eq? n 0) 0 (+ n (sum-to (- n 1)))))\n\
+            \(if (== n 0) 0 (+ n (sum-to (- n 1)))))\n\
             \(sum-to 10)" `shouldEvalTo` AstInt 55
         it "is even" $
             "(define (is-even n) \
-            \(eq? (mod n 2) 0))\n\
+            \(== (mod n 2) 0))\n\
             \(is-even 10)" `shouldEvalTo` AstBool True
         it "is odd" $
             "(define (is-odd n) \
-            \(eq? (mod n 2) 1))\n\
+            \(== (mod n 2) 1))\n\
             \(is-odd 7)" `shouldEvalTo` AstBool True
         it "multiple functions" $
             "(define (double x) (* x 2))\n\
@@ -349,7 +351,7 @@ main = hspec $ do
             \(quadruple 25)" `shouldEvalTo` AstInt 100
         it "factorial tail recursive" $
             "(define (fact-tr n acc) \
-            \(if (eq? n 0) acc (fact-tr (- n 1) (* n acc))))\n\
+            \(if (== n 0) acc (fact-tr (- n 1) (* n acc))))\n\
             \(define (fact n) (fact-tr n 1))\n\
             \(fact 10)" `shouldEvalTo` AstInt 3628800
         it "higher order" $
@@ -357,21 +359,21 @@ main = hspec $ do
             \(define (triple x) (* x 3))\n\
             \(apply-twice triple 8)" `shouldEvalTo` AstInt 72
         it "less or equal" $
-            "(define (<= a b) (if (< a b) #t (eq? a b)))\n\
+            "(define (<= a b) (if (< a b) #t (== a b)))\n\
             \(<= 5 5)" `shouldEvalTo` AstBool True
         it "greater or equal" $
             "(define (>= a b) (if (< a b) #f #t))\n\
             \(>= 5 5)" `shouldEvalTo` AstBool True
         it "not equal" $
-            "(define (!= a b) (if (eq? a b) #f #t))\n\
+            "(define (!= a b) (if (== a b) #f #t))\n\
             \(!= 5 6)" `shouldEvalTo` AstBool True
         it "div mod verify" $
             "(define a 17)\n(define b 5)\n\
-            \(eq? a (+ (* (div a b) b) (mod a b)))"
+            \(== a (+ (* (/ a b) b) (mod a b)))"
                 `shouldEvalTo` AstBool True
         it "countdown" $
             "(define (countdown n) \
-            \(if (eq? n 0) 0 (countdown (- n 1))))\n\
+            \(if (== n 0) 0 (countdown (- n 1))))\n\
             \(countdown 100)" `shouldEvalTo` AstInt 0
 
     describe "Edge Cases Tests" $ do
@@ -394,12 +396,12 @@ main = hspec $ do
         it "subtract same" $
             "(- 42 42)" `shouldEvalTo` AstInt 0
         it "div by one" $
-            "(div 42 1)" `shouldEvalTo` AstInt 42
+            "(/ 42 1)" `shouldEvalTo` AstInt 42
         it "lambda ignore arg" $
             "((lambda (x) 42) 999)" `shouldEvalTo` AstInt 42
         it "recursion depth" $
             "(define (recurse n) \
-            \(if (eq? n 0) 0 (recurse (- n 1))))\n\
+            \(if (== n 0) 0 (recurse (- n 1))))\n\
             \(recurse 500)" `shouldEvalTo` AstInt 0
         it "bool var condition" $
             "(define cond #t)\n(if cond 1 2)" `shouldEvalTo` AstInt 1
@@ -413,16 +415,16 @@ main = hspec $ do
         it "self apply" $
             "((lambda (f) (f 42)) (lambda (x) x))" `shouldEvalTo` AstInt 42
         it "triple nested arithmetic" $
-            "(+ (* 10 (- 15 5)) (div 100 (+ 5 5)))" `shouldEvalTo` AstInt 110
+            "(+ (* 10 (- 15 5)) (/ 100 (+ 5 5)))" `shouldEvalTo` AstInt 110
         it "eq computed" $
-            "(eq? (+ 20 22) (* 6 7))" `shouldEvalTo` AstBool True
+            "(== (+ 20 22) (* 6 7))" `shouldEvalTo` AstBool True
         it "deep if nesting" $
             "(if #t (if #t (if #t (if #t (if #t (if #t 42 0) 0) 0) 0) 0) 0)"
                 `shouldEvalTo` AstInt 42
 
     describe "Error Handling Tests" $ do
         it "unbound variable" $ shouldFail "foo"
-        it "division by zero" $ shouldFail "(div 10 0)"
+        it "division by zero" $ shouldFail "(/ 10 0)"
         it "modulo by zero" $ shouldFail "(mod 10 0)"
         it "wrong type arg plus" $ shouldFail "(+ 1 #t)"
         it "wrong type arg less" $ shouldFail "(< 1 #t)"
@@ -688,20 +690,20 @@ main = hspec $ do
     describe "Function Calls" $ do
         it "parses function call with no arguments" $
             TSL.parseSExprEither "main()" `shouldBe`
-                Right (SList [SSymbol "call", SSymbol "main"])
+                Right (SList [SSymbol "call", SSymbol "main", SList []])
         it "parses function call with one argument" $
             TSL.parseSExprEither "print(42)" `shouldBe`
-                Right (SList [SSymbol "call", SSymbol "print", SInt 42])
+                Right (SList [SSymbol "call", SSymbol "print", SList [SInt 42]])
         it "parses function call with multiple arguments" $
             TSL.parseSExprEither "add(1, 2)" `shouldBe`
-                Right (SList [SSymbol "call", SSymbol "add", SInt 1, SInt 2])
+                Right (SList [SSymbol "call", SSymbol "add", SList [SInt 1, SInt 2]])
         it "parses function call with variable arguments" $
             TSL.parseSExprEither "compute(x, y)" `shouldBe`
-                Right (SList [SSymbol "call", SSymbol "compute", SSymbol "x", SSymbol "y"])
+                Right (SList [SSymbol "call", SSymbol "compute", SList [SSymbol "x", SSymbol "y"]])
         it "parses function call with address-of argument" $
             TSL.parseSExprEither "modify(&x)" `shouldBe`
                 Right (SList [SSymbol "call", SSymbol "modify",
-                       SList [SSymbol "addr-of", SSymbol "x"]])
+                       SList [SList [SSymbol "addr-of", SSymbol "x"]]])
 
     describe "Return Statements (deschodt)" $ do
         it "parses return with integer" $
@@ -717,13 +719,13 @@ main = hspec $ do
     describe "Print Statements (peric)" $ do
         it "parses simple print" $
             TSL.parseSExprEither "peric(\"Hello\")" `shouldBe`
-                Right (SList [SSymbol "print", SList [SSymbol "string", SSymbol "Hello"]])
+                Right (SList [SSymbol "call", SSymbol "peric", SList [SList [SSymbol "string-interp", SList [SString "Hello"]]]])
         it "parses print with interpolation syntax" $
             TSL.parseSExprEither "peric(\"x = {x}\")" `shouldBe`
-                Right (SList [SSymbol "print", SList [SSymbol "string", SSymbol "x = {x}"]])
+                Right (SList [SSymbol "call", SSymbol "peric", SList [SList [SSymbol "string-interp", SList [SString "x = ", SSymbol "x"]]]])
         it "parses print with empty string" $
             TSL.parseSExprEither "peric(\"\")" `shouldBe`
-                Right (SList [SSymbol "print", SList [SSymbol "string", SSymbol ""]])
+                Right (SList [SSymbol "call", SSymbol "peric", SList [SList [SSymbol "string-interp", SList []]]])
 
     describe "Structs (destruct)" $ do
         it "parses simple struct" $
@@ -740,13 +742,15 @@ main = hspec $ do
                        SList [SSymbol "age", SSymbol "int"]])
 
     describe "Enums (desnum)" $ do
-        it "parses simple enum" $
+        it "parses simple enum (returns block)" $
             TSL.parseSExprEither "desnum Color:" `shouldBe`
-                Right (SList [SSymbol "enum", SSymbol "Color"])
-        it "parses enum with values" $
+                Right (SList [SSymbol "block"])
+        it "parses enum with values (returns block with defines)" $
             TSL.parseSExprEither "desnum Jour:\n    Lundi\n    Mardi\n    Mercredi" `shouldBe`
-                Right (SList [SSymbol "enum", SSymbol "Jour",
-                       SSymbol "Lundi", SSymbol "Mardi", SSymbol "Mercredi"])
+                Right (SList [SSymbol "block", 
+                       SList [SSymbol "define", SSymbol "Lundi", SInt 0, SSymbol "int"], 
+                       SList [SSymbol "define", SSymbol "Mardi", SInt 1, SSymbol "int"], 
+                       SList [SSymbol "define", SSymbol "Mercredi", SInt 2, SSymbol "int"]])
 
     describe "Comments (desnote)" $ do
         it "parses line comment syntax" $
