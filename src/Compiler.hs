@@ -173,7 +173,6 @@ compileToObject out ast = catch (do
         asmFile = "/tmp/glados_emit.s"
     _ <- E.evaluate (length asm)
     writeFile asmFile asm
-    hPutStr stderr ("---ASM START---\n" ++ asm ++ "\n---ASM END---\n")
     _ <- callCommand ("as -o " ++ out ++ " " ++ asmFile)
     return ()) handler
   where

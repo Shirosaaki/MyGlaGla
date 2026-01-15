@@ -50,10 +50,6 @@ compileFromStdin compile = do
     case parseSExprMultipleEither input of
         Left err -> printError ("Parsing error:\n" ++ err) >> exitWith (ExitFailure 84)
         Right sexprs -> do
-            -- Debug: print the parsed S-expressions before converting to AST
-            putStrLn "--- SExpr (parsed) ---"
-            print sexprs
-            putStrLn "----------------------"
             case mapM sexprToAST sexprs of
                 Left perr -> printError perr >> exitWith (ExitFailure 84)
                 Right asts -> do
@@ -62,11 +58,8 @@ compileFromStdin compile = do
                                     [def@(Define name _ (AstLambda params _))] | null params ->
                                         [def, Call (AstSymbol name) []]
                                     _ -> asts
-                    -- Print ASTs being sent to the compiler for inspection
-                    putStrLn "--- AST (parsed) ---"
-                    print asts'
-                    putStrLn "--------------------"
                     compile (Block asts')
+                    putStrLn "Compilation completed successfully."
 
 -- Execute a source file
 runFileMode :: FilePath -> IO ()
