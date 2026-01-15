@@ -5,13 +5,16 @@
 -- Bytecode instruction set definition
 -}
 
-module Bytecode where
+module Bytecode
+  ( Instruction(..)
+  , BytecodeProgram(..)
+  , opcodeOf
+  , decodeOpcode
+  ) where
 
 import Data.Word (Word8)
 import Data.Int (Int32)
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Builder as B
-import qualified Data.ByteString.Lazy as BSL
 import Prelude hiding (LT, EQ)
 
 data Instruction
@@ -153,11 +156,11 @@ decodeInt32 :: BS.ByteString -> Maybe (Int32, BS.ByteString)
 decodeInt32 bs
   | BS.length bs >= 4 =
       let bytes = BS.unpack (BS.take 4 bs)
-          val   = fromIntegral (bytes !! 0) * 256^3 +
-                  fromIntegral (bytes !! 1) * 256^2 +
-                  fromIntegral (bytes !! 2) * 256     +
+          val   = fromIntegral (bytes !! 0) * (256 :: Integer)^(3 :: Integer) +
+                  fromIntegral (bytes !! 1) * (256 :: Integer)^(2 :: Integer) +
+                  fromIntegral (bytes !! 2) * 256 +
                   fromIntegral (bytes !! 3)
-          val'  = if val > 2^31 - 1 then val - 2^32 else val
+          val'  = if val > (2 :: Integer)^(31 :: Integer) - 1 then val - (2 :: Integer)^(32 :: Integer) else val
       in Just (fromIntegral val', BS.drop 4 bs)
   | otherwise = Nothing
 

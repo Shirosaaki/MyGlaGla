@@ -18,13 +18,13 @@ module VM
 
 import Bytecode
 import Data.Int (Int32)
-import Data.Word (Word8, Word16, Word32)
+import Data.Word (Word16, Word32)
 import qualified Data.Map.Strict as Map
 import qualified Data.ByteString as BS
 import qualified Bytecode as BC
-import System.IO (hPutStrLn, stderr)
+import System.IO ()
 import Control.Exception (try, SomeException(..))
-import qualified Data.ByteString.Lazy as BSL
+import qualified Data.ByteString.Lazy as BSL()
 
 -- Runtime values
 data VMValue
@@ -414,4 +414,4 @@ runELFFile filePath = do
   progResult <- loadProgramFromELF filePath
   case progResult of
     Left err -> return (Left err, [])
-    Right instructions -> return $ runVM instructions
+    Right instrs -> return $ runVM instrs

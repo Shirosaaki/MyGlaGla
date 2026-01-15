@@ -14,11 +14,11 @@ module ELFLoader
 
 import qualified Data.ByteString as BS
 import Data.Word (Word8, Word16, Word32, Word64)
-import Data.Bits ((.&.), (.|.), shiftL, shiftR)
-import Data.List (find)
+import Data.Bits ((.|.), shiftL)
+import Data.List()
 import Control.Exception (try, SomeException(..))
-import System.Process (callCommand, readProcess)
-import System.Exit (ExitCode(..))
+import System.Process (callCommand)
+import System.Exit()
 
 -- ELF Section representation
 data ELFSection = ELFSection
@@ -62,72 +62,72 @@ parseELFFile bs
   | BS.length bs < 64 = Left "ELF file too small"
   | otherwise =
       let magic = BS.unpack (BS.take 4 bs)
-          elfMagic = [0x7F, 0x45, 0x4C, 0x46]
-      in if magic /= elfMagic
+          elfMagic' = [0x7F, 0x45, 0x4C, 0x46]
+      in if magic /= elfMagic'
            then Left "Invalid ELF magic number"
            else parseELFHeader bs
 
 -- Parse ELF header (64-bit little-endian)
 parseELFHeader :: BS.ByteString -> Either String ELFFile
 parseELFHeader bs =
-  let magic = BS.unpack (BS.take 4 bs)
-      elfClass = BS.index bs 4
-      elfData = BS.index bs 5
-      elfOSABI = BS.index bs 7
+  let magic' = BS.unpack (BS.take 4 bs)
+      elfClass' = BS.index bs 4
+      elfData' = BS.index bs 5
+      elfOSABI' = BS.index bs 7
       
       -- Validate format
-      isValid = elfClass == 2 && elfData == 1  -- 64-bit, little-endian
+      isValid = elfClass' == 2 && elfData' == 1  -- 64-bit, little-endian
   in if not isValid
        then Left "Only 64-bit little-endian ELF files supported"
        else
-         let elfType = readWord16LE bs 16
-             elfMachine = readWord16LE bs 18
-             elfEntry = readWord64LE bs 32
-             elfSectionHeaderOffset = readWord64LE bs 40
-             elfSectionHeaderSize = readWord16LE bs 58
-             elfSectionHeaderCount = readWord16LE bs 60
-             elfSectionNameIndex = readWord16LE bs 62
+         let elfType' = readWord16LE bs 16
+             elfMachine' = readWord16LE bs 18
+             elfEntry' = readWord64LE bs 32
+             elfSectionHeaderOffset' = readWord64LE bs 40
+             elfSectionHeaderSize' = readWord16LE bs 58
+             elfSectionHeaderCount' = readWord16LE bs 60
+             elfSectionNameIndex' = readWord16LE bs 62
              
-             sections = parseSectionHeaders bs elfSectionHeaderOffset elfSectionHeaderCount elfSectionHeaderSize
+             sections = parseSectionHeaders bs elfSectionHeaderOffset' elfSectionHeaderCount' elfSectionHeaderSize'
          in Right $ ELFFile
-              { elfMagic = magic
-              , elfClass = elfClass
-              , elfData = elfData
-              , elfOSABI = elfOSABI
-              , elfType = elfType
-              , elfMachine = elfMachine
-              , elfEntry = elfEntry
-              , elfSectionHeaderOffset = elfSectionHeaderOffset
-              , elfSectionHeaderSize = elfSectionHeaderSize
-              , elfSectionHeaderCount = elfSectionHeaderCount
-              , elfSectionNameIndex = elfSectionNameIndex
+              { elfMagic = magic'
+              , elfClass = elfClass'
+              , elfData = elfData'
+              , elfOSABI = elfOSABI'
+              , elfType = elfType'
+              , elfMachine = elfMachine'
+              , elfEntry = elfEntry'
+              , elfSectionHeaderOffset = elfSectionHeaderOffset'
+              , elfSectionHeaderSize = elfSectionHeaderSize'
+              , elfSectionHeaderCount = elfSectionHeaderCount'
+              , elfSectionNameIndex = elfSectionNameIndex'
               , elfSections = sections
               }
 
 -- Parse section headers
 parseSectionHeaders :: BS.ByteString -> Word64 -> Word16 -> Word16 -> [ELFSection]
 parseSectionHeaders bs offset count size =
-  [parseSection bs (offset + fromIntegral i * fromIntegral size) | i <- [0..fromIntegral count - 1]]
+  [parseSection bs (offset + fromIntegral (i :: Integer) * fromIntegral size) | i <- [0..fromIntegral count - 1]]
 
 -- Parse a single section header (64-bit)
 parseSection :: BS.ByteString -> Word64 -> ELFSection
 parseSection bs offset =
   let offset' = fromIntegral offset
-      nameIdx = readWord32LE bs (offset' + 0)
-      sectionType = readWord32LE bs (offset' + 4)
-      sectionFlags = readWord64LE bs (offset' + 8)
-      sectionAddr = readWord64LE bs (offset' + 16)
-      sectionOffset = readWord64LE bs (offset' + 24)
-      sectionSize = readWord64LE bs (offset' + 32)
-      sectionData = if fromIntegral sectionOffset + fromIntegral sectionSize <= BS.length bs
-                    then BS.take (fromIntegral sectionSize) (BS.drop (fromIntegral sectionOffset) bs)
+      _nameIdx = readWord32LE bs (offset' + 0)
+      _sectionType = readWord32LE bs (offset' + 4)
+      sectionFlags' = readWord64LE bs (offset' + 8)
+      _sectionAddr = readWord64LE bs (offset' + 16)
+      sectionOffset' = readWord64LE bs (offset' + 24)
+      sectionSize' = readWord64LE bs (offset' + 32)
+      sectionData' = if fromIntegral sectionOffset' + fromIntegral sectionSize' <= BS.length bs
+                    then BS.take (fromIntegral sectionSize') (BS.drop (fromIntegral sectionOffset') bs)
                     else BS.empty
   in ELFSection
        { sectionName = ""  -- Name lookup requires string table
-       , sectionOffset = sectionOffset
-       , sectionSize = sectionSize
-       , sectionFlags = sectionFlags
-       , sectionData = sectionData
+       , sectionOffset = sectionOffset'
+       , sectionSize = sectionSize'
+       , sectionFlags = sectionFlags'
+       , sectionData = sectionData'
        }
 
 -- Execute ELF file by linking and running
@@ -139,7 +139,7 @@ executeELF filePath elf = do
 
 -- Execute x86-64 ELF file
 executeX86_64ELF :: FilePath -> ELFFile -> IO (Either String Int)
-executeX86_64ELF objFile elf = do
+executeX86_64ELF objFile _ = do
   -- Link the object file into an executable using GCC
   let exePath = "/tmp/glados_prog"
   
@@ -168,10 +168,6 @@ executeProgram exePath = do
   case result of
     Left err -> return $ Left ("Execution failed: " ++ show err)
     Right () -> return $ Right 0
-
--- Find a section by name
-findSection :: String -> ELFFile -> Maybe ELFSection
-findSection name elf = find (\s -> sectionName s == name) (elfSections elf)
 
 -- Helper: Read 16-bit little-endian
 readWord16LE :: BS.ByteString -> Int -> Word16

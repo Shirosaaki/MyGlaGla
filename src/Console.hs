@@ -7,7 +7,7 @@
 module Console (runConsole, runBatch) where
 
 import System.Exit (exitWith, ExitCode(ExitFailure))
-import System.IO (hPutStrLn, stderr)
+import System.IO ()
 import Control.Monad.IO.Class (liftIO)
 import System.Console.Haskeline
 import AST (SExpr(..), Ast(..), Env,

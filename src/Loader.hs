@@ -11,7 +11,7 @@ import Bytecode
 import qualified Data.ByteString as BS
 import Data.Word (Word8)
 import Data.Int (Int32)
-import Data.Bits (shiftL, (.&.))
+import Data.Bits ((.&.))
 
 -- Magic number for .o files: "GLO\0"
 magicNumber :: [Word8]
@@ -108,13 +108,11 @@ encodeInt32 :: Int32 -> BS.ByteString
 encodeInt32 n =
     let n' = fromIntegral n :: Int
         n'' = if n' < 0 then n' + 2^(32::Int) else n'
-        b0 = fromIntegral ((n'' `shiftR` 24) .&. 0xFF)
-        b1 = fromIntegral ((n'' `shiftR` 16) .&. 0xFF)
-        b2 = fromIntegral ((n'' `shiftR` 8) .&. 0xFF)
+        b0 = fromIntegral ((n'' `div` (2^(24::Int))) .&. 0xFF)
+        b1 = fromIntegral (((n'' `div` (2^(16::Int))) .&. 0xFF))
+        b2 = fromIntegral (((n'' `div` (2^(8::Int))) .&. 0xFF))
         b3 = fromIntegral (n'' .&. 0xFF)
     in BS.pack [b0, b1, b2, b3]
-  where
-    shiftR x n = x `div` (2^n)
 
 -- Encode String as length-prefixed bytes
 encodeString :: String -> BS.ByteString

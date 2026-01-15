@@ -5,7 +5,7 @@ import qualified Data.Map.Strict as Map
 import Data.List (isInfixOf)
 import qualified Data.Set as Set
 import System.Process (callCommand)
-import System.IO (hPutStr, stderr)
+import System.IO ()
 import Control.Exception (catch, SomeException(..), displayException)
 import System.Exit (exitFailure)
 import qualified Control.Exception as E
@@ -137,9 +137,6 @@ inlineGlobalConsts consts = goAst 0 Set.empty
             For v coll body -> 
                  let shadowed' = Set.insert v shadowed
                  in For v (goAst depth shadowed coll) (goAst (depth+1) shadowed' body)
-            Call (AstSymbol "for") [AstSymbol v, s, e, body] ->
-                 let shadowed' = Set.insert v shadowed
-                 in Call (AstSymbol "for") [AstSymbol v, goAst depth shadowed s, goAst depth shadowed e, goAst (depth+1) shadowed' body]
 
             Define n t (AstLambda params body) ->
                 let shadowed' = Set.union shadowed (Set.fromList params)
@@ -152,7 +149,7 @@ inlineGlobalConsts consts = goAst 0 Set.empty
             _ -> ast0
 
         goBlock :: Int -> Set.Set String -> [Ast] -> [Ast]
-        goBlock depth shadowed [] = []
+        goBlock _ _ [] = []
         goBlock depth shadowed (stmt:rest) =
              let stmt' = goAst depth shadowed stmt
                  -- Inside functions (depth > 0), local variables shadow globals
@@ -221,7 +218,7 @@ emitText (Block asts) labels globalVt funcNames =
         
         clearMem = concatMap (\(n, off) -> 
             let isArray = Map.lookup n localVt == Just (TCustom "int[]")
-                sz = if n == "memo" then 1000000 
+                sz = if n == "memo" then (1000000 :: Integer)
                      else if isArray then 4096 
                      else 0
             in if sz > 0
@@ -262,7 +259,7 @@ emitFunc labels globalVt funcNames (Define name _ (AstLambda params body)) =
         
         clearMem = concatMap (\(n, off) -> 
             let isArray = Map.lookup n localVt == Just (TCustom "int[]")
-                sz = if n == "memo" then 1000000 
+                sz = if n == "memo" then (1000000 :: Integer)
                      else if isArray then 4096 
                      else 0
             in if sz > 0

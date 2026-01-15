@@ -6,7 +6,7 @@
 -}
 module Main (main) where
 
-import System.IO (hIsTerminalDevice, stdin, hPutStrLn, stderr)
+import System.IO (hIsTerminalDevice, stdin)
 import System.Environment (getArgs)
 import System.Exit (die, exitWith, ExitCode(ExitFailure, ExitSuccess))
 import System.FilePath (takeExtension)
@@ -119,17 +119,18 @@ evalSequence env (s:ss) =
 
 printResult' :: Ast -> IO ()
 printResult' (AstInt n) = print n
-printResult' (AstBool True) = print 1
-printResult' (AstBool False) = print 0
+printResult' (AstBool True) = putStrLn "1"
+printResult' (AstBool False) = putStrLn "0"
 printResult' AstVoid = return ()
 printResult' (AstClosure _ _ _) = putStrLn "#<procedure>"
 printResult' result = print result
 
 printVMResult :: VM.VMValue -> IO ()
 printVMResult (VM.VMInt n) = print n
-printVMResult (VM.VMBool True) = print 1
-printVMResult (VM.VMBool False) = print 0
+printVMResult (VM.VMBool True) = putStrLn "1"
+printVMResult (VM.VMBool False) = putStrLn "0"
+printVMResult (VM.VMString s) = putStrLn s
+printVMResult (VM.VMClosure {}) = putStrLn "#<closure>"
 printVMResult VM.VMVoid = return ()
-printVMResult (VM.VMClosure _ _ _) = putStrLn "#<procedure>"
 
 type Env = [(String, Ast)]

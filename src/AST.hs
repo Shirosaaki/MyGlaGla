@@ -92,12 +92,6 @@ parseTypeSExpr _ = Left "bad type"
 makeCallArgs :: Ast -> [SExpr] -> Either String Ast
 makeCallArgs fnAst args = fmap (Call fnAst) (mapM sexprToAST args)
 
-makeCall :: SExpr -> [SExpr] -> Either String Ast
-makeCall fn args =
-    case sexprToAST fn of
-        Left err -> Left err
-        Right fnAst -> makeCallArgs fnAst args
-
 -- Unified and (more) exhaustive SExpr -> Ast converter tailored to TheShow SExprs
 sexprToAST :: SExpr -> Either String Ast
 sexprToAST (SSymbol s) = Right (AstSymbol s)
@@ -138,25 +132,25 @@ sexprToAST (SList [SSymbol "fun", SSymbol name, SList params, _ret, SList body])
 
 -- variable declaration: (eric name type [value])
 sexprToAST (SList (SSymbol "eric" : SSymbol name : ty : xs)) =
-    let valSexpr = if null xs then SSymbol "unit" else head xs
-        parseTypeSExpr (SSymbol "int") = Right TInt
-        parseTypeSExpr (SSymbol "float") = Right TFloat
-        parseTypeSExpr (SSymbol "string") = Right TString
-        parseTypeSExpr (SSymbol "bool") = Right TBool
-        parseTypeSExpr (SSymbol other) = Right (TCustom other)
-        parseTypeSExpr (SList [SSymbol "array-type", SSymbol base]) = Right (TCustom (base ++ "[]"))
-        parseTypeSExpr _ = Left "eric: bad type"
-    in case (sexprToAST valSexpr, parseTypeSExpr ty) of
+    let valSexpr = case xs of
+                     (v:_) -> v
+                     [] -> SSymbol "unit"
+        parseTypeExpr (SSymbol "int") = Right TInt
+        parseTypeExpr (SSymbol "float") = Right TFloat
+        parseTypeExpr (SSymbol "string") = Right TString
+        parseTypeExpr (SSymbol "bool") = Right TBool
+        parseTypeExpr (SSymbol other) = Right (TCustom other)
+        parseTypeExpr (SList [SSymbol "array-type", SSymbol base]) = Right (TCustom (base ++ "[]"))
+        parseTypeExpr _ = Left "eric: bad type"
+    in case (sexprToAST valSexpr, parseTypeExpr ty) of
         (Right v, Right t) -> Right (Define name (Just t) v)
         (Left e, _) -> Left e
         (_, Left e) -> Left e
-sexprToAST (SSymbol "continue") = Right Continue
-sexprToAST (SSymbol "break") = Right Break
 sexprToAST (SList (SSymbol "block" : xs)) = 
     case mapM sexprToAST xs of
         Right asts -> Right (Block asts)
         Left e -> Left e
-sexprToAST (SList (SSymbol "eric" : rest)) = Left "eric: bad syntax"
+sexprToAST (SList (SSymbol "eric" : _)) = Left "eric: bad syntax"
 
 -- return
 sexprToAST (SList [SSymbol "return", expr]) =
@@ -224,17 +218,17 @@ sexprToAST (SList [SSymbol "define", SSymbol name, val, ty]) =
         (Left e, _) -> Left e
         (_, Left e) -> Left e
 sexprToAST (SList [SSymbol "define", SSymbol name, SSymbol ty]) =
-    case parseTypeSExpr (SSymbol ty) of
+    case parseTypeExpr (SSymbol ty) of
         Right t -> Right (Define name (Just t) AstVoid)
         Left e -> Left e
   where
-    parseTypeSExpr (SSymbol "int") = Right TInt
-    parseTypeSExpr (SSymbol "float") = Right TFloat
-    parseTypeSExpr (SSymbol "string") = Right TString
-    parseTypeSExpr (SSymbol "bool") = Right TBool
-    parseTypeSExpr (SSymbol other) = Right (TCustom other)
-    parseTypeSExpr (SList [SSymbol "array-type", SSymbol base]) = Right (TCustom (base ++ "[]"))
-    parseTypeSExpr _ = Left "define: bad type"
+    parseTypeExpr (SSymbol "int") = Right TInt
+    parseTypeExpr (SSymbol "float") = Right TFloat
+    parseTypeExpr (SSymbol "string") = Right TString
+    parseTypeExpr (SSymbol "bool") = Right TBool
+    parseTypeExpr (SSymbol other) = Right (TCustom other)
+    parseTypeExpr (SList [SSymbol "array-type", SSymbol base]) = Right (TCustom (base ++ "[]"))
+    parseTypeExpr _ = Left "define: bad type"
 
 -- assign: (assign name value)  OR  (assign (member-access obj field) value)
 sexprToAST (SList [SSymbol "assign", SList (SSymbol "member-access" : SSymbol obj : SSymbol field : []) , value]) =
@@ -284,9 +278,6 @@ sexprToAST (SList (fn:args)) =
     case sexprToAST fn of
         Left err -> Left err
         Right fnAst -> makeCallArgs fnAst args
-
--- fallback
-sexprToAST other = Left ("Unsupported SExpr: " ++ show other)
 
 -- | Evaluation with enhanced type support (keeps previous behavior)
 evalAST :: Env -> Ast -> EvalResult

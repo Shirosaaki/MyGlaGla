@@ -11,14 +11,14 @@ module Config (
 ) where
 
 import System.Environment (lookupEnv)
-import System.Directory (doesFileExist, getHomeDirectory, createDirectoryIfMissing)
+import System.Directory (doesFileExist, getHomeDirectory)
 import System.FilePath ((</>))
-import Data.Maybe (fromMaybe)
+import Data.Maybe()
 import qualified Data.Yaml as Y
 import Data.Yaml ((.:?), (.!=))
 import Data.Aeson (FromJSON(..), withObject)
 import Data.Aeson.Types (withText)
-import qualified Data.Text as T
+import Data.Text()
 
 data OutputMode = Console | Html deriving (Eq, Show)
 
@@ -50,34 +50,34 @@ instance FromJSON OutputMode where
 
 instance FromJSON ErrorStyle where
   parseJSON = withObject "ErrorStyle" $ \o -> do
-    esPrefix <- o .:? "prefix" .!= "*** ERROR: "
-    esColor <- o .:? "color"
-    esBold <- o .:? "bold" .!= True
-    esUnderline <- o .:? "underline" .!= False
-    pure ErrorStyle { esPrefix = esPrefix
-                    , esColor = esColor
-                    , esBold = esBold
-                    , esUnderline = esUnderline }
+    prefix' <- o .:? "prefix" .!= "*** ERROR: "
+    color' <- o .:? "color"
+    bold' <- o .:? "bold" .!= True
+    underline' <- o .:? "underline" .!= False
+    pure ErrorStyle { esPrefix = prefix'
+                    , esColor = color'
+                    , esBold = bold'
+                    , esUnderline = underline' }
 
 instance FromJSON HtmlStyle where
   parseJSON = withObject "HtmlStyle" $ \o -> do
-    hsFontFamily <- o .:? "font_family" .!= "DejaVu Sans Mono, monospace"
-    hsFontSize <- o .:? "font_size" .!= "18px"
-    hsColor <- o .:? "color" .!= "#ff5555"
-    hsPath <- o .:? "path" .!= "glados_error.html"
-    pure HtmlStyle { hsFontFamily = hsFontFamily
-                   , hsFontSize = hsFontSize
-                   , hsColor = hsColor
-                   , hsPath = hsPath }
+    fontFamily' <- o .:? "font_family" .!= "DejaVu Sans Mono, monospace"
+    fontSize' <- o .:? "font_size" .!= "18px"
+    color' <- o .:? "color" .!= "#ff5555"
+    path' <- o .:? "path" .!= "glados_error.html"
+    pure HtmlStyle { hsFontFamily = fontFamily'
+                   , hsFontSize = fontSize'
+                   , hsColor = color'
+                   , hsPath = path' }
 
 instance FromJSON Config where
   parseJSON = withObject "Config" $ \o -> do
-    cfgMode <- o .:? "output_mode" .!= Console
-    cfgErrorStyle <- o .:? "error" .!= ErrorStyle "*** ERROR: " (Just "red") True False
-    cfgHtml <- o .:? "html" .!= HtmlStyle "DejaVu Sans Mono, monospace" "18px" "#ff5555" "glados_error.html"
-    pure Config { cfgMode = cfgMode
-                , cfgErrorStyle = cfgErrorStyle
-                , cfgHtml = cfgHtml }
+    mode' <- o .:? "output_mode" .!= Console
+    errorStyle' <- o .:? "error" .!= ErrorStyle "*** ERROR: " (Just "red") True False
+    html' <- o .:? "html" .!= HtmlStyle "DejaVu Sans Mono, monospace" "18px" "#ff5555" "glados_error.html"
+    pure Config { cfgMode = mode'
+                , cfgErrorStyle = errorStyle'
+                , cfgHtml = html' }
 
 -- Load configuration from GLADOS_CONFIG, ./glados.config.yaml, or ~/.config/glados/config.yaml
 getConfig :: IO Config
