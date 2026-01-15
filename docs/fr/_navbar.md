@@ -12,5 +12,7 @@
   * [Pointeurs](./TSL/pointers.md)
   * [Lecture & Écriture](./TSL/read-write.md)
 * [🔧 Documentation Technique](./TECHNICAL.md)
+* [🖥️ Documentation de la VM](./TECHNICAL_VM.md)
+* [📚 Documentation du Compilateur](./TECHNICAL_COMPILER.md)
 * [🤝 Guide de Contribution](./CONTRIBUTING.md)
 * [🌍 Guide de Traduction](./TRANSLATION_GUIDE.md)
