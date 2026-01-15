@@ -23,14 +23,17 @@ builtIns :: [String]
 builtIns = ["renaud", "romaric", "marvin", "str_concat", "+", "-", "*", "/", "%", "==", "<", ">", "<=", ">=", "!=", "assign", "define", "array-type", "array-access", "array-decl", "string-interp", "for"]
 
 -- =============================================================================
--- LLVM Stubs
+-- LLVM / Assembly Output
 -- =============================================================================
 
 compileModuleLLVM :: Ast -> String
-compileModuleLLVM _ = ""
+compileModuleLLVM ast = emitASM ast
 
-compileToLL :: a -> b -> IO ()
-compileToLL _ _ = return ()
+compileToLL :: FilePath -> Ast -> IO ()
+compileToLL outputPath ast = do
+    let asmCode = emitASM ast
+    writeFile outputPath asmCode
+    putStrLn $ "Assembly code written to: " ++ outputPath
 
 -- =============================================================================
 -- Analysis & Memory Mapping
