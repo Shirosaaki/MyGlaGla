@@ -3,126 +3,134 @@
 <head>
   <meta charset="UTF-8">
   <title>GLADOS Documentation</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
+  <meta name="description" content="Documentation GLADOS">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
   <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify@4/lib/themes/vue.css">
   <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify-darklight-theme@latest/dist/style.min.css">
 
   <style>
-    /* --- Styles Accessibility Panel --- */
-    #accessibility-controls { position: fixed; bottom: 20px; right: 20px; z-index: 999; background:#fff; border:1px solid #ccc; padding:12px; border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.3); max-width:280px;}
-    #accessibility-toggle { cursor:pointer; padding:8px 12px; border:1px solid #ccc; background:#42b983; color:#fff; border-radius:4px; font-weight:bold; width:100%; font-size:14px;}
+    /* --- Accessibility Controls --- */
+    #accessibility-controls { position: fixed; bottom:20px; right:20px; z-index:999; background:var(--background,#fff); border:1px solid var(--border-color,#ccc); padding:12px; border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.3); max-width:280px;}
+    #accessibility-toggle { cursor:pointer; padding:8px 12px; border:1px solid var(--border-color,#ccc); background:var(--accent,#42b983); color:#fff; border-radius:4px; font-weight:bold; width:100%; font-size:14px;}
     #accessibility-panel { margin-top:10px; display:none; }
     #accessibility-panel.open { display:block; }
-    .control-group { margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #eee;}
+    .control-group { margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid var(--border-color,#eee); }
     .control-group:last-child { border-bottom:none; margin-bottom:0; }
-    .control-group label { display:block; font-size:12px; font-weight:bold; margin-bottom:5px; color:#333;}
+    .control-group label { display:block; font-size:12px; font-weight:bold; margin-bottom:5px; color:var(--text-color,#333); }
     .button-row { display:flex; gap:5px; flex-wrap:wrap; }
-    #accessibility-controls button { cursor:pointer; padding:6px 10px; border:1px solid #ccc; background:#f8f8f8; color:#333; border-radius:4px; font-size:12px; transition: all 0.2s;}
-    #accessibility-controls button:hover { background:#42b983; color:#fff; transform:translateY(-1px);}
-    #accessibility-controls input[type="color"] { width:60px; height:32px; border:1px solid #ccc; border-radius:4px; cursor:pointer;}
-    #accessibility-controls input[type="range"] { width:100%; margin:5px 0;}
+    #accessibility-controls button { cursor:pointer; padding:6px 10px; border:1px solid var(--border-color,#ccc); background:var(--code-background-color,#f8f8f8); color:var(--text-color,#333); border-radius:4px; font-size:12px; transition: all 0.2s; }
+    #accessibility-controls button:hover { background:var(--accent,#42b983); color:#fff; transform:translateY(-1px);}
+    #accessibility-controls input[type="color"] { width:60px; height:32px; border:1px solid var(--border-color,#ccc); border-radius:4px; cursor:pointer; }
+    #accessibility-controls input[type="range"] { width:100%; margin:5px 0; }
+    .color-presets { display:flex; gap:5px; margin-top:5px; }
+    .color-preset { width:30px; height:30px; border-radius:4px; cursor:pointer; border:2px solid var(--border-color,#ccc); transition: transform 0.2s; }
+    .color-preset:hover { transform:scale(1.1); border-color:var(--accent,#42b983); }
+
+    /* Language selector */
+    #language-selector { display:inline-flex; align-items:center; gap:5px; margin-bottom:10px; }
+    #language-selector select { cursor:pointer; padding:6px 10px; border:1px solid var(--border-color,#ccc); background:var(--code-background-color,#f8f8f8); color:var(--text-color,#333); border-radius:4px; font-size:12px; height:32px; outline:none; }
+    #language-selector select:hover { background:var(--accent,#42b983); color:#fff; border-color:var(--accent,#42b983); }
   </style>
 </head>
 <body>
-  <div id="app"></div>
+<div id="app"></div>
 
-  <script>
-    // --- LANGUES & BASE PATH ---
-    const translations = {
-      en: { settingsButton:'⚙️ Accessibility Settings', fontSize:'Font Size', reset:'Reset', textColor:'Text Color', contrast:'Contrast', language:'🌐 Language' },
-      fr: { settingsButton:'⚙️ Paramètres d\'accessibilité', fontSize:'Taille de police', reset:'Réinitialiser', textColor:'Couleur du texte', contrast:'Contraste', language:'🌐 Langue' },
-      es: { settingsButton:'⚙️ Configuración de accesibilidad', fontSize:'Tamaño de fuente', reset:'Restablecer', textColor:'Color del texto', contrast:'Contraste', language:'🌐 Idioma' },
-      de: { settingsButton:'⚙️ Barrierefreiheitseinstellungen', fontSize:'Schriftgröße', reset:'Zurücksetzen', textColor:'Textfarbe', contrast:'🌐 Sprache' }
-    };
+<script>
+  const translations = {
+    en: { settingsButton:'⚙️ Accessibility Settings', fontSize:'Font Size', reset:'Reset', textColor:'Text Color', contrast:'Contrast', language:'🌐 Language' },
+    fr: { settingsButton:'⚙️ Paramètres d\'accessibilité', fontSize:'Taille de police', reset:'Réinitialiser', textColor:'Couleur du texte', contrast:'Contraste', language:'🌐 Langue' },
+    es: { settingsButton:'⚙️ Configuración de accesibilidad', fontSize:'Tamaño de fuente', reset:'Restablecer', textColor:'Color del texto', contrast:'Contraste', language:'🌐 Idioma' },
+    de: { settingsButton:'⚙️ Barrierefreiheitseinstellungen', fontSize:'Schriftgröße', reset:'Zurücksetzen', textColor:'Textfarbe', contrast:'Kontrast', language:'🌐 Sprache' }
+  };
 
-    function getCurrentLanguage() {
-      return localStorage.getItem('docLanguage') || 'en';
-    }
+  function getCurrentLanguage(){ return localStorage.getItem('docLanguage') || 'en'; }
+  function setLanguage(lang){ localStorage.setItem('docLanguage', lang); document.getElementById('doc-html').setAttribute('lang', lang); updateUILanguage(lang); }
 
-    function setLanguage(lang) {
-      localStorage.setItem('docLanguage', lang);
-      document.getElementById('doc-html').setAttribute('lang', lang);
-    }
+  function updateUILanguage(lang){
+    const t = translations[lang] || translations.en;
+    const toggleBtn = document.getElementById('accessibility-toggle'); if(toggleBtn) toggleBtn.innerText = t.settingsButton;
+    const labels = document.querySelectorAll('.control-group label');
+    if(labels.length>0) labels[0].childNodes[0].textContent = t.fontSize;
+    if(labels.length>1) labels[1].childNodes[0].textContent = t.textColor;
+    if(labels.length>2){ const contrastLabel = labels[2]; const value = document.getElementById('contrast-value'); if(value) contrastLabel.childNodes[0].textContent = t.contrast + ': '; }
+  }
 
-    const lang = getCurrentLanguage();
+  function getLanguageBasePath(){ return '/' + getCurrentLanguage() + '/'; }
 
-    window.$docsify = {
-      name: 'GLADOS',
-      repo: '',
-      loadNavbar: true,
-      basePath: '/MyGlaGla/',             // <-- repo utilisateur ou orga
-      homepage: `${lang}/README.md`,       // charge README de la langue
-      fallbackLanguages: ['en'],
-      darklightTheme: {
-        siteFont: "PT Sans",
-        defaultTheme: 'dark',
-        dark: { accent:'#42b983', background:'#091a28', textColor:'#b4b4b4', codeBackgroundColor:'#0e2233', codeTextColor:'#fff' },
-        light:{ accent:'#42b983', background:'#fff', textColor:'#34495e', codeBackgroundColor:'#f8f8f8', codeTextColor:'#525252' }
-      },
-      plugins: [
-        function(hook, vm){
-          // --- Initialisation Langue ---
-          hook.init(()=> setLanguage(lang));
+  window.$docsify = {
+    name: 'GLADOS',
+    repo: '',
+    loadNavbar: true,
+    basePath: getLanguageBasePath(),
+    fallbackLanguages: ['en'],
+    darklightTheme: {
+      siteFont:"PT Sans",
+      defaultTheme:'dark',
+      dark:{ accent:'#42b983', background:'#091a28', textColor:'#b4b4b4', codeBackgroundColor:'#0e2233', codeTextColor:'#fff', borderColor:'#0d2538'},
+      light:{ accent:'#42b983', background:'#fff', textColor:'#34495e', codeBackgroundColor:'#f8f8f8', codeTextColor:'#525252', borderColor:'rgba(0,0,0,0.07)'}
+    },
+    plugins: [
+      function(hook, vm){
+        hook.init(()=> setLanguage(getCurrentLanguage()));
+        hook.doneEach(()=>{
+          if(document.getElementById('accessibility-controls')) return;
 
-          hook.doneEach(()=>{
-            if(!document.getElementById('accessibility-controls')){
-              const div = document.createElement('div');
-              div.id='accessibility-controls';
+          const div = document.createElement('div'); div.id='accessibility-controls';
 
-              // Language Selector
-              const langDiv = document.createElement('div');
-              const select = document.createElement('select');
-              ['en','fr','es','de'].forEach(l=>{
-                const o=document.createElement('option'); o.value=l; o.innerText=l.toUpperCase(); if(l===lang)o.selected=true; select.appendChild(o);
-              });
-              select.onchange=()=> { setLanguage(select.value); window.location.reload(); };
-              langDiv.appendChild(select);
-
-              // Toggle Accessibility
-              const btn = document.createElement('button');
-              btn.id='accessibility-toggle'; btn.innerText=translations[lang].settingsButton;
-              btn.onclick=()=> document.getElementById('accessibility-panel').classList.toggle('open');
-
-              // Panel
-              const panel = document.createElement('div'); panel.id='accessibility-panel';
-
-              // Font Size
-              const fg = document.createElement('div'); fg.className='control-group';
-              fg.innerHTML=`<label>${translations[lang].fontSize}</label>`;
-              const row = document.createElement('div'); row.className='button-row';
-              const dec=document.createElement('button'); dec.innerText='A-'; dec.onclick=()=> { const b=document.body; const s=parseFloat(getComputedStyle(b).fontSize); b.style.fontSize=(s-2)+'px'; localStorage.setItem('fontSize', b.style.fontSize);};
-              const reset=document.createElement('button'); reset.innerText=translations[lang].reset; reset.onclick=()=>{ document.body.style.fontSize=''; document.body.style.color=''; document.body.style.filter=''; localStorage.removeItem('fontSize'); localStorage.removeItem('textColor'); localStorage.removeItem('contrast'); };
-              const inc=document.createElement('button'); inc.innerText='A+'; inc.onclick=()=>{ const b=document.body; const s=parseFloat(getComputedStyle(b).fontSize); b.style.fontSize=(s+2)+'px'; localStorage.setItem('fontSize', b.style.fontSize);};
-              row.append(dec, reset, inc); fg.appendChild(row);
-
-              // Text Color
-              const cg = document.createElement('div'); cg.className='control-group'; cg.innerHTML=`<label>${translations[lang].textColor}</label>`;
-              const colorInput = document.createElement('input'); colorInput.type='color'; colorInput.onchange=()=> { document.body.style.color=colorInput.value; localStorage.setItem('textColor', colorInput.value); };
-              cg.appendChild(colorInput);
-
-              // Contrast
-              const contrast = document.createElement('div'); contrast.className='control-group';
-              contrast.innerHTML=`<label>${translations[lang].contrast}: <span id="contrast-value">100%</span></label>`;
-              const slider=document.createElement('input'); slider.type='range'; slider.min='50'; slider.max='200'; slider.value='100';
-              slider.oninput=()=>{ document.body.style.filter='contrast('+(slider.value/100)+')'; document.getElementById('contrast-value').innerText=slider.value+'%'; localStorage.setItem('contrast', slider.value); };
-              contrast.appendChild(slider);
-
-              panel.append(fg,cg,contrast);
-              div.append(langDiv,btn,panel);
-              document.body.appendChild(div);
-
-              // Restore saved settings
-              if(localStorage.fontSize) document.body.style.fontSize=localStorage.fontSize;
-              if(localStorage.textColor) { document.body.style.color=localStorage.textColor; colorInput.value=localStorage.textColor; }
-              if(localStorage.contrast){ slider.value=localStorage.contrast; document.body.style.filter='contrast('+(localStorage.contrast/100)+')'; document.getElementById('contrast-value').innerText=localStorage.contrast+'%'; }
-            }
+          // Language Selector
+          const langDiv = document.createElement('div'); langDiv.id='language-selector';
+          const langSelect = document.createElement('select');
+          ['en','fr','es','de'].forEach(l=>{
+            const o=document.createElement('option'); o.value=l; o.innerText=l.toUpperCase(); if(l===getCurrentLanguage()) o.selected=true; langSelect.appendChild(o);
           });
-        }
-      ]
-    };
-  </script>
+          langSelect.onchange=()=>{ setLanguage(langSelect.value); location.reload(); };
+          langDiv.appendChild(langSelect);
 
-  <script src="//cdn.jsdelivr.net/npm/docsify@4"></script>
-  <script src="//cdn.jsdelivr.net/npm/docsify-darklight-theme@latest/dist/index.min.js"></script>
+          // Toggle button
+          const toggleBtn = document.createElement('button'); toggleBtn.id='accessibility-toggle'; toggleBtn.innerText = translations[getCurrentLanguage()].settingsButton;
+          toggleBtn.onclick=()=> document.getElementById('accessibility-panel').classList.toggle('open');
+
+          // Panel
+          const panel = document.createElement('div'); panel.id='accessibility-panel';
+
+          // Font size
+          const fontGroup = document.createElement('div'); fontGroup.className='control-group';
+          fontGroup.innerHTML='<label>'+translations[getCurrentLanguage()].fontSize+'</label>';
+          const fontRow = document.createElement('div'); fontRow.className='button-row';
+          const btnDec=document.createElement('button'); btnDec.innerText='A-'; btnDec.onclick=()=>{ const s=parseFloat(getComputedStyle(document.body).fontSize); document.body.style.fontSize=(s-2)+'px'; localStorage.setItem('fontSize', document.body.style.fontSize); };
+          const btnReset=document.createElement('button'); btnReset.innerText=translations[getCurrentLanguage()].reset; btnReset.onclick=()=>{ document.body.style.fontSize=''; document.body.style.color=''; document.body.style.filter=''; localStorage.removeItem('fontSize'); localStorage.removeItem('textColor'); localStorage.removeItem('contrast'); };
+          const btnInc=document.createElement('button'); btnInc.innerText='A+'; btnInc.onclick=()=>{ const s=parseFloat(getComputedStyle(document.body).fontSize); document.body.style.fontSize=(s+2)+'px'; localStorage.setItem('fontSize', document.body.style.fontSize); };
+          fontRow.append(btnDec,btnReset,btnInc); fontGroup.appendChild(fontRow);
+
+          // Text color
+          const colorGroup = document.createElement('div'); colorGroup.className='control-group';
+          colorGroup.innerHTML='<label>'+translations[getCurrentLanguage()].textColor+'</label>';
+          const colorPicker = document.createElement('input'); colorPicker.type='color'; colorPicker.onchange=()=>{ document.body.style.color=colorPicker.value; localStorage.setItem('textColor', colorPicker.value); };
+          colorGroup.appendChild(colorPicker);
+
+          // Contrast
+          const contrastGroup=document.createElement('div'); contrastGroup.className='control-group';
+          contrastGroup.innerHTML='<label>'+translations[getCurrentLanguage()].contrast+': <span id="contrast-value">100%</span></label>';
+          const slider=document.createElement('input'); slider.type='range'; slider.min='50'; slider.max='200'; slider.value='100';
+          slider.oninput=()=>{ document.body.style.filter='contrast('+(slider.value/100)+')'; document.getElementById('contrast-value').innerText=slider.value+'%'; localStorage.setItem('contrast', slider.value); };
+          contrastGroup.appendChild(slider);
+
+          panel.append(fontGroup,colorGroup,contrastGroup);
+          div.append(langDiv,toggleBtn,panel);
+          document.body.appendChild(div);
+
+          // Restore saved settings
+          if(localStorage.fontSize) document.body.style.fontSize=localStorage.fontSize;
+          if(localStorage.textColor){ document.body.style.color=localStorage.textColor; colorPicker.value=localStorage.textColor; }
+          if(localStorage.contrast){ slider.value=localStorage.contrast; document.body.style.filter='contrast('+(localStorage.contrast/100)+')'; document.getElementById('contrast-value').innerText=localStorage.contrast+'%'; }
+        });
+      }
+    ]
+  };
+</script>
+
+<script src="//cdn.jsdelivr.net/npm/docsify@4"></script>
+<script src="//cdn.jsdelivr.net/npm/docsify-darklight-theme@latest/dist/index.min.js"></script>
 </body>
 </html>
