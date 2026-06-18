@@ -14,13 +14,22 @@ import System.IO.Unsafe (unsafePerformIO)
 import Bytecode (Instruction(..))
 import qualified Bytecode as BC -- Ajout pour disambiguer LT/EQ
 import Loader (saveBytecodeFile)
+import Data.Word (Word64)
+import Foreign.Ptr (castPtr)
+import Foreign.Marshal.Array (allocaArray)
+import Foreign.Storable (poke, peek)
 
 -- =============================================================================
 -- Configuration
 -- =============================================================================
 
 builtIns :: [String]
-builtIns = ["renaud", "romaric", "marvin", "str_concat", "+", "-", "*", "/", "%", "==", "<", ">", "<=", ">=", "!=", "assign", "define", "array-type", "array-access", "array-decl", "string-interp", "for"]
+builtIns = ["renaud", "romaric", "marvin", "str_concat", "+", "-", "*", "/", "%", "==", "<", ">", "<=", ">=", "!=", "&&", "||", "assign", "define", "array-type", "array-access", "array-decl", "string-interp", "for"]
+
+floatToBits :: Double -> IO Word64
+floatToBits d = allocaArray 1 $ \ptr -> do
+    poke (castPtr ptr) d
+    peek ptr
 
 -- =============================================================================
 -- LLVM / Assembly Output
@@ -180,8 +189,7 @@ compileToObject out ast = catch (do
 
 emitASM :: Ast -> String
 emitASM ast =
-    -- >>> FIX: Inline global constants first <<<
-    let ast' = inlineGlobalConsts (collectGlobalConsts ast) ast
+    let ast' = ast -- DESACTIVE inlineGlobalConsts ici
         varTypes = collectVarTypes ast' Map.empty
         funcNames = collectFunctionNames ast'
         strs = uniqueList (collectStrings ast' varTypes)
@@ -287,6 +295,9 @@ emitFunc _ _ _ _ = ""
 exprToASM :: Ast -> Map.Map String Int -> [(String, Int)] -> Map.Map String Type -> [String] -> [String]
 exprToASM (AstInt n) _ _ _ _ = ["movq $" ++ show n ++ ", %rax"]
 exprToASM (AstChar c) _ _ _ _ = ["movq $" ++ show (fromEnum c) ++ ", %rax"]
+exprToASM (AstFloat f) _ _ _ _ = 
+                                let bits = unsafePerformIO $ floatToBits f
+                                in ["movq $" ++ show bits ++ ", %rax"]
 exprToASM (AstSymbol v) locals labels vt fns
     | " + " `isInfixOf` v = let p = words v in exprToASM (Call (AstSymbol "+") [AstSymbol (p!!0), AstSymbol (p!!2)]) locals labels vt fns
     | "[" `isInfixOf` v && last v == ']' = 
@@ -342,10 +353,43 @@ exprToASM (Call (AstSymbol "array-access") [baseExpr, idxExpr]) locals labels vt
             exprToASM idxExpr locals labels vt fns ++ 
             ["movq %rax, %rcx", "popq %rdx", "movq (%rdx, %rcx, 8), %rax", "jmp 2f", "1:", "movq $0, %rax", "2:"]
 
+exprToASM (Call (AstSymbol "&&") [lhs, rhs]) locals labels vt fns =
+    exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++
+    exprToASM rhs locals labels vt fns ++ ["movq %rax, %rdx", "popq %rax", "andq %rdx, %rax"]
+
+exprToASM (Call (AstSymbol "||") [lhs, rhs]) locals labels vt fns =
+    exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++
+    exprToASM rhs locals labels vt fns ++ ["movq %rax, %rdx", "popq %rax", "orq %rdx, %rax"]
+
 exprToASM (Call (AstSymbol op) [lhs, rhs]) locals labels vt fns
     | op `elem` ["<", "==", ">", "<=", ">=", "!="] = 
-        let instr = case op of { "<" -> "setl"; "==" -> "sete"; ">" -> "setg"; "<=" -> "setle"; ">=" -> "setge"; "!=" -> "setne"; _ -> "sete" }
-        in exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt fns ++ ["movq %rax, %rdx", "popq %rax", "cmpq %rdx, %rax", instr ++ " %al", "movzbq %al, %rax"]
+        let isF a = case a of { AstFloat _ -> True; AstSymbol s -> Map.lookup s vt == Just TFloat; _ -> False }
+            
+            -- Instructions de saut conditionnel pour ENTIERS
+            instrInt = case op of { "<" -> "setl"; "==" -> "sete"; ">" -> "setg"; "<=" -> "setle"; ">=" -> "setge"; "!=" -> "setne"; _ -> "sete" }
+            
+            -- Instructions de saut conditionnel pour FLOTTANTS (SSE)
+            -- Note : pour les floats, on utilise 'setb' (below) et 'seta' (above)
+            instrFloat = case op of { "<" -> "setb"; "==" -> "sete"; ">" -> "seta"; "<=" -> "setbe"; ">=" -> "setae"; "!=" -> "setne"; _ -> "sete" }
+
+        in if isF lhs || isF rhs
+           then -- COMPARAISON FLOTTANTE
+                exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++ 
+                exprToASM rhs locals labels vt fns ++ 
+                [ "movq %rax, %xmm1"      -- Charge le côté droit dans XMM1
+                , "popq %rdx"             -- Récupère le côté gauche
+                , "movq %rdx, %xmm0"      -- Charge le côté gauche dans XMM0
+                -- Si l'un des deux était un entier, on le convertit en float à la volée
+                ] ++ (if not (isF lhs) then ["cvtsi2sd %rdx, %xmm0"] else []) 
+                  ++ (if not (isF rhs) then ["cvtsi2sd %rax, %xmm1"] else []) ++
+                [ "comisd %xmm1, %xmm0"   -- La vraie comparaison de doubles
+                , instrFloat ++ " %al"    -- On utilise le flag flottant
+                , "movzbq %al, %rax"
+                ]
+           else -- COMPARAISON ENTIÈRE CLASSIQUE
+                exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++ 
+                exprToASM rhs locals labels vt fns ++ 
+                ["movq %rax, %rdx", "popq %rax", "cmpq %rdx, %rax", instrInt ++ " %al", "movzbq %al, %rax"]
 exprToASM (Call (AstSymbol func) args) locals labels vt fns
     | "[" `isInfixOf` func = exprToASM (AstSymbol func) locals labels vt fns
     | func == "array-type" = ["xorq %rax, %rax"]
@@ -363,6 +407,9 @@ exprToASM (Call (AstSymbol func) args) locals labels vt fns
         let evals = concatMap (\arg -> exprToASM arg locals labels vt fns ++ ["pushq %rax"]) args
             loads = concat $ reverse $ zipWith (\_ r -> ["popq " ++ r]) args ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"]
         in evals ++ loads ++ ["movb $0, %al", "call " ++ func]
+exprToASM (Call (AstSymbol "&&") [lhs, rhs]) locals labels vt fns =
+    exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++
+    exprToASM rhs locals labels vt fns ++ ["popq %rdx", "andq %rdx, %rax"]
 exprToASM _ _ _ _ _ = ["movq $0, %rax"]
 
 stmtToASM :: Ast -> Int -> [(String, Int)] -> Map.Map String Int -> String -> Maybe String -> Maybe String -> Map.Map String Type -> Map.Map String Int -> [String] -> (Int, [String], Map.Map String Int)
@@ -386,17 +433,35 @@ stmtToASM (Assign name val) uid labels locals _ _ _ vt li fns =
                     printError ("Compilation Error: Assignment to undefined variable '" ++ name ++ "'")
                     exitFailure
     in (uid, exprToASM val locals labels vt fns ++ ["movq %rax, -" ++ show off ++ "(%rbp)"], li)
+-- Dans src/Compiler.hs (vers ligne 380 - cas peric)
 stmtToASM (Call (AstSymbol "peric") [Call (AstSymbol "string-interp") pts]) uid labels locals _ _ _ vt li fns =
     let flat = flattenStringInterp pts
         fmt = buildFormatString vt flat ++ "\n"
         fmtIdx = maybe 0 id (lookup fmt labels)
         args = [p | p <- flat, not (isStringNode p)]
-        needsPadding = odd (length args)
-        paddingPush = if needsPadding then ["pushq $0"] else []
-        paddingPop = if needsPadding then ["addq $8, %rsp"] else []
-        evals = concatMap (\p -> exprToASM p locals labels vt fns ++ ["pushq %rax"]) args
-        loads = concat $ reverse $ zipWith (\_ r -> ["popq " ++ r]) args ["%rsi", "%rdx", "%rcx", "%r8", "%r9"]
-    in (uid, paddingPush ++ evals ++ loads ++ paddingPop ++ ["leaq LC" ++ show fmtIdx ++ "(%rip), %rdi", "movb $0, %al", "call printf"], li)
+        
+        -- On évalue l'argument unique (ton langage print un truc à la fois)
+        evalArg = if null args then ["xorq %rax, %rax"] else exprToASM (head args) locals labels vt fns
+        
+        isFloat = case args of
+            (AstSymbol s : _) -> Map.lookup s vt == Just TFloat
+            (AstFloat _ : _)  -> True
+            _                 -> False
+
+        -- Préparation de l'appel
+        -- 1. Aligner la pile (printf crash sinon)
+        -- 2. Mettre le format dans RDI
+        -- 3. Mettre la valeur dans RSI (entier) ET XMM0 (float)
+        -- 4. AL = 1 si float, 0 sinon
+        callPrintf = 
+            [ "andq $-16, %rsp"                -- Force l'alignement 16-bytes
+            , "leaq LC" ++ show fmtIdx ++ "(%rip), %rdi"
+            ] ++ (if isFloat 
+                  then ["movq %rax, %xmm0", "movb $1, %al"] 
+                  else ["movq %rax, %rsi", "movb $0, %al"])
+              ++ ["call printf"]
+
+    in (uid, evalArg ++ callPrintf, li)
 stmtToASM (Call (AstSymbol "assign") [Call (AstSymbol "array-access") [baseExpr, i], v]) uid labels locals _ _ _ vt li fns
     | not (isSimpleSymbol baseExpr) =
     let key = getLiKey baseExpr
@@ -477,7 +542,10 @@ stmtToASM (IfElse cond th el) uid labels locals ret ls le vt li fns =
         lEnd = ".L_end_" ++ show uid
         (uid1, thStmts, li1) = emitStmts th (uid + 1) labels locals ret ls le vt li fns
         (uid2, elStmts, li2) = emitStmts el uid1 labels locals ret ls le vt li fns
-        instrs = exprToASM cond locals labels vt fns ++ ["cmpq $0, %rax", "je " ++ lElse] ++ thStmts ++ ["jmp " ++ lEnd, lElse ++ ":"] ++ elStmts ++ [lEnd ++ ":"]
+        instrs = exprToASM cond locals labels vt fns ++ 
+                 ["cmpq $0, %rax", "je " ++ lElse] ++ 
+                 thStmts ++ ["jmp " ++ lEnd, lElse ++ ":"] ++ 
+                 elStmts ++ [lEnd ++ ":"]
     in (uid2, instrs, li2 `Map.union` li1)
 stmtToASM (Call (AstSymbol "while") [cond, body]) uid labels locals ret _ _ vt li fns =
     let lStart = ".L_w_s" ++ show uid
@@ -491,6 +559,8 @@ stmtToASM Continue uid _ _ _ (Just ls) _ _ li _ = (uid, ["jmp " ++ ls], li)
 stmtToASM Break uid _ _ _ _ _ _ li _ = (uid, [], li)
 stmtToASM Continue uid _ _ _ _ _ _ li _ = (uid, [], li)
 stmtToASM (Block xs) uid l loc ret ls le vt li fns = handleBrokenNodes xs uid l loc ret ls le vt li fns
+stmtToASM (Block stmts) uid labels locals ret ls le vt li fns =
+    handleBrokenNodes stmts uid labels locals ret ls le vt li fns
 stmtToASM (AstList xs) uid l loc ret ls le vt li fns = handleBrokenNodes xs uid l loc ret ls le vt li fns
 stmtToASM (Struct _ _) uid _ _ _ _ _ _ li _ = (uid, [], li)
 stmtToASM (Call (AstSymbol "array-decl") [baseExpr, idxExpr, _]) uid labels locals _ _ _ vt li fns =
@@ -540,13 +610,12 @@ buildFormatString vt (Call (AstSymbol s) [] : xs) =
         isCharArr = isArr && Map.lookup name vt == Just TString
         fmt = if isStr then "%s" else if isCharArr then "%c" else "%ld"
     in fmt ++ buildFormatString vt xs
+-- Dans src/Compiler.hs (vers ligne 550)
 buildFormatString vt (AstSymbol s : xs) = 
     let isStr = Map.lookup s vt == Just TString || " + " `isInfixOf` s
-        name = takeWhile (/= '[') s
-        isArr = "[" `isInfixOf` s 
-        isCharArr = isArr && Map.lookup name vt == Just TString
-        isChar = Map.lookup s vt == Just TChar
-    in (if isStr && not isArr then "%s" else if isChar || isCharArr then "%c" else "%ld") ++ buildFormatString vt xs
+        isFloat = Map.lookup s vt == Just TFloat -- Détection du type Float
+        fmt = if isStr then "%s" else if isFloat then "%.2f" else "%ld"
+    in fmt ++ buildFormatString vt xs
 buildFormatString vt (Call (AstSymbol "+") _ : xs) = "%s" ++ buildFormatString vt xs
 buildFormatString vt (Call (AstSymbol func) _ : xs) 
     | "[" `isInfixOf` func = 

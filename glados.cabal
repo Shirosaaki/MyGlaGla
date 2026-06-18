@@ -36,6 +36,7 @@ library
       Loader
       Parser
       Theshow.Parser
+      WaifuLang.Parser
       UI
       VM
   other-modules:

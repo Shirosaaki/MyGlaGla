@@ -1,0 +1,120 @@
+# ============================================================
+# TEST SUITE - WaifuLang
+# Couvre : variables, types, arithmétique, comparaisons,
+#          if/else, while, for, retour.
+# ============================================================
+
+# --- Variables & types de base ---
+Toph doesn't have nickname and has result.
+Mikasa nickname is a and takes 10.
+Mitsuri nickname is b and takes 3.
+Yor nickname is f and takes 2.5.
+Hayasaka nickname is c and takes 'Z'.
+Mitsuri nickname is msg and takes "ok".
+Esdeath nickname is nothing_var and takes nothing.
+
+# ============================================================
+# 1. ARITHMETIQUE
+# ============================================================
+
+# addition
+result takes a + b.
+Columbina say result.
+
+# soustraction
+result takes a - b.
+Columbina say result.
+
+# multiplication
+result takes a * b.
+Columbina say result.
+
+# division
+result takes a / b.
+Columbina say result.
+
+# expressions composées : (a + b) * b = 39
+result takes a + b * b.
+Columbina say result.
+
+# ============================================================
+# 2. COMPARAISONS simples
+# ============================================================
+
+Alya thinks that a is greater than b so Columbina say "a > b : ok".
+Akane thinks that b is lower than a so Columbina say "b < a : ok".
+Erina thinks that a is greater or equal to 10 so Columbina say "a >= 10 : ok".
+Chitanda thinks that b is lower or equal to 3 so Columbina say "b <= 3 : ok".
+Violet thinks that a is equal to 10 so Columbina say "a == 10 : ok".
+
+# ============================================================
+# 3. IF / ELSE
+# ============================================================
+
+Alya thinks that a is greater than 5 so Columbina say "if : ok".
+Erina thinks something different so Columbina say "if : FAIL".
+
+Alya thinks that a is lower than 5 so Columbina say "else : FAIL".
+Erina thinks something different so Columbina say "else : ok".
+
+# ============================================================
+# 4. IF BLOC MULTI-LIGNES
+# ============================================================
+
+Alya thinks that a is equal to 10 so :
+- Columbina say "bloc if ligne 1 : ok".
+- Columbina say "bloc if ligne 2 : ok".
+
+# ============================================================
+# 5. CONDITIONS COMPOSÉES (and / or)
+# ============================================================
+
+Alya thinks that a is equal to 10 and that b is equal to 3 so Columbina say "and : ok".
+Akane thinks that a is equal to 99 and that b is equal to 3 so Columbina say "and : FAIL".
+Erina thinks something different so Columbina say "and false : ok".
+
+Alya thinks that a is equal to 99 or equal to 10 so Columbina say "or : ok".
+Akane thinks that a is equal to 99 or equal to 88 so Columbina say "or : FAIL".
+Erina thinks something different so Columbina say "or false : ok".
+
+# ============================================================
+# 6. FOR
+# ============================================================
+
+# Compte de 0 à 4 (limite 5 exclue)
+C18 will operate until C18 nickname i equal to 0 is lower than 5 and incremented by 1 each time.
+Columbina say i.
+C18 finish to operate.
+
+# ============================================================
+# 7. WHILE
+# ============================================================
+
+# Décrémente a de 10 à 6 (sort quand a <= 5)
+Boa_Hancock perform until a is greater than 5.
+Columbina say a.
+a takes a - 1.
+Boa_Hancock finish to perform.
+
+# ============================================================
+# 8. MODIFICATION DE VARIABLE DANS UN BLOC
+# ============================================================
+
+Mikasa nickname is x and takes 1.
+Alya thinks that x is equal to 1 so :
+- x takes x + 10.
+- Columbina say x.
+
+# ============================================================
+# 9. COMPARAISON FLOAT
+# ============================================================
+
+Alya thinks that f is lower than 3.0 so Columbina say "float < : ok".
+Akane thinks that f is greater than 3.0 so Columbina say "float > : FAIL".
+Erina thinks something different so Columbina say "float > false : ok".
+
+# ============================================================
+# 10. RETOUR
+# ============================================================
+
+Albedo leave with 0.
