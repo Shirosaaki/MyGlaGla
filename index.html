@@ -2,9 +2,9 @@
 <html lang="en" id="doc-html">
 <head>
   <meta charset="UTF-8">
-  <title>GLADOS Documentation</title>
+  <title>Document</title>
   <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
-  <meta name="description" content="GLADOS Documentation">
+  <meta name="description" content="Description">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
   <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify@4/lib/themes/vue.css">
   <link 
@@ -13,9 +13,149 @@
     title="docsify-darklight-theme"
     type="text/css"
   />
-  <!-- Le style reste identique -->
   <style>
-    /* ... (tout le style précédent) ... */
+    /* Custom styles for accessibility controls */
+    #accessibility-controls {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 999;
+      background: var(--background, #fff);
+      border: 1px solid var(--border-color, #ccc);
+      padding: 12px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      max-width: 280px;
+    }
+    
+    #accessibility-toggle {
+      cursor: pointer;
+      padding: 8px 12px;
+      border: 1px solid var(--border-color, #ccc);
+      background: var(--accent, #42b983);
+      color: #fff;
+      border-radius: 4px;
+      font-weight: bold;
+      width: 100%;
+      font-size: 14px;
+    }
+    
+    #accessibility-panel {
+      margin-top: 10px;
+      display: none;
+    }
+    
+    #accessibility-panel.open {
+      display: block;
+    }
+    
+    .control-group {
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border-color, #eee);
+    }
+    
+    .control-group:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+    }
+    
+    .control-group label {
+      display: block;
+      font-size: 12px;
+      font-weight: bold;
+      margin-bottom: 5px;
+      color: var(--text-color, #333);
+    }
+    
+    .button-row {
+      display: flex;
+      gap: 5px;
+      flex-wrap: wrap;
+    }
+    
+    #accessibility-controls button {
+      cursor: pointer;
+      padding: 6px 10px;
+      border: 1px solid var(--border-color, #ccc);
+      background: var(--code-background-color, #f8f8f8);
+      color: var(--text-color, #333);
+      border-radius: 4px;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+    
+    #accessibility-controls button:hover {
+      background: var(--accent, #42b983);
+      color: #fff;
+      transform: translateY(-1px);
+    }
+    
+    #accessibility-controls input[type="color"] {
+      width: 60px;
+      height: 32px;
+      border: 1px solid var(--border-color, #ccc);
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    
+    #accessibility-controls input[type="range"] {
+      width: 100%;
+      margin: 5px 0;
+    }
+    
+    .color-presets {
+      display: flex;
+      gap: 5px;
+      margin-top: 5px;
+    }
+    
+    .color-preset {
+      width: 30px;
+      height: 30px;
+      border-radius: 4px;
+      cursor: pointer;
+      border: 2px solid var(--border-color, #ccc);
+      transition: transform 0.2s;
+    }
+    
+    .color-preset:hover {
+      transform: scale(1.1);
+      border-color: var(--accent, #42b983);
+    }
+    
+    /* Language Selector */
+    #language-selector {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-right: 5px;
+    }
+    
+    #language-selector label {
+      font-size: 14px;
+      margin: 0;
+      cursor: pointer;
+    }
+    
+    #language-selector select {
+      cursor: pointer;
+      padding: 6px 10px;
+      border: 1px solid var(--border-color, #ccc);
+      background: var(--code-background-color, #f8f8f8);
+      color: var(--text-color, #333);
+      border-radius: 4px;
+      font-size: 12px;
+      outline: none;
+      height: 32px;
+    }
+    
+    #language-selector select:hover {
+      background: var(--accent, #42b983);
+      color: #fff;
+      border-color: var(--accent, #42b983);
+    }
+
   </style>
 </head>
 <body>
@@ -100,70 +240,60 @@
       }
     }
     
-    // Get the repository name for GitHub Pages
-    function getRepoName() {
-      // Adjust this based on your GitHub repository name
-      // If your repo is at https://github.com/username/MyGlaGla
-      // then this should return '/MyGlaGla/'
-      // If you're using a custom domain, return '/'
-      return '/MyGlaGla/'; // ← Changez ceci pour correspondre à votre nom de repo
+    // Get initial language-based path
+    function getLanguageBasePath() {
+      var lang = getCurrentLanguage();
+      return '/' + lang + '/';
     }
-    
-    const currentLang = getCurrentLanguage();
-    
+  
     window.$docsify = {
       name: 'GLADOS',
       repo: '',
       loadNavbar: true,
-      loadSidebar: true,
-      basePath: getRepoName(), // Pour GitHub Pages
+      basePath: getLanguageBasePath(),
       fallbackLanguages: ['en'],
       darklightTheme: {
-        siteFont: "PT Sans",
-        defaultTheme: 'dark',
-        codeFontFamily: 'Roboto Mono, Monaco, courier, monospace',
-        bodyFontSize: '17px',
+        siteFont : "PT Sans",
+        defaultTheme : 'dark',
+        codeFontFamily : 'Roboto Mono, Monaco, courier, monospace',
+        bodyFontSize : '17px',
         dark: {
           accent: '#42b983',
-          toogleBackground: '#ffffff',
+          toogleBackground : '#ffffff',
           background: '#091a28',
           textColor: '#b4b4b4',
-          codeTextColor: '#ffffff',
-          codeBackgroundColor: '#0e2233',
-          borderColor: '#0d2538',
-          blockQuoteColour: '#858585',
-          highlightColor: '#d22778',
-          sidebarSublink: '#b4b4b4',
-          codeTypeColor: '#ffffff',
-          coverBackground: 'linear-gradient(to left bottom, hsl(118, 100%, 85%) 0%,hsl(147, 100%, 85%) 100%)',
-          toogleImage: 'url(https://cdn.jsdelivr.net/npm/docsify-darklight-theme@latest/icons/sun.svg)'
+          codeTextColor : '#ffffff',
+          codeBackgroundColor : '#0e2233',
+          borderColor : '#0d2538',
+          blockQuoteColour : '#858585',
+          highlightColor : '#d22778',
+          sidebarSublink : '#b4b4b4',
+          codeTypeColor : '#ffffff',
+          coverBackground : 'linear-gradient(to left bottom, hsl(118, 100%, 85%) 0%,hsl(147, 100%, 85%) 100%)',
+          toogleImage : 'url(https://cdn.jsdelivr.net/npm/docsify-darklight-theme@latest/icons/sun.svg)'
         },
         light: {
           accent: '#42b983',
-          toogleBackground: '#091a28',
+          toogleBackground : '#091a28',
           background: '#ffffff',
           textColor: '#34495e',
-          codeTextColor: '#525252',
-          codeBackgroundColor: '#f8f8f8',
-          borderColor: 'rgba(0, 0, 0, 0.07)',
-          blockQuoteColour: '#858585',
-          highlightColor: '#d22778',
-          sidebarSublink: '#505d6b',
-          codeTypeColor: '#091a28',
-          coverBackground: 'linear-gradient(to left bottom, hsl(118, 100%, 85%) 0%,hsl(147, 100%, 85%) 100%)',
-          toogleImage: 'url(https://cdn.jsdelivr.net/npm/docsify-darklight-theme@latest/icons/moon.svg)'
+          codeTextColor : '#525252',
+          codeBackgroundColor : '#f8f8f8',
+          borderColor : 'rgba(0, 0, 0, 0.07)',
+          blockQuoteColour : '#858585',
+          highlightColor : '#d22778',
+          sidebarSublink : '#505d6b',
+          codeTypeColor : '#091a28',
+          coverBackground : 'linear-gradient(to left bottom, hsl(118, 100%, 85%) 0%,hsl(147, 100%, 85%) 100%)',
+          toogleImage : 'url(https://cdn.jsdelivr.net/npm/docsify-darklight-theme@latest/icons/moon.svg)'
         }
       },
       plugins: [
         function(hook, vm) {
-          // Initialize language on load
+          // Initialize language selector on load
           hook.init(function() {
-            setLanguage(currentLang);
-            
-            // If the current hash is empty (root), redirect to the current language
-            if (!window.location.hash || window.location.hash === '#') {
-              window.location.hash = '#/' + currentLang + '/';
-            }
+             // Set initial language but don't create separate selector
+             setLanguage(getCurrentLanguage());
           });
           
           hook.doneEach(function() {
@@ -190,25 +320,25 @@
                 var option = document.createElement('option');
                 option.value = lang.code;
                 option.innerText = lang.name;
-                if (lang.code === currentLang) {
+                if (lang.code === getCurrentLanguage()) {
                   option.selected = true;
                 }
                 langSelect.appendChild(option);
               });
               
               langSelect.onchange = function() {
-                const newLang = this.value;
-                setLanguage(newLang);
-                // Redirect to the new language root
-                window.location.hash = '#/' + newLang + '/';
-                // Note: We do not reload the page, let Docsify handle the routing
+                setLanguage(this.value);
+                // Reload to apply language-based routing
+                window.location.reload();
               };
               
               langDiv.appendChild(langSelect);
               
               // Toggle button
               var toggleBtn = document.createElement('button');
+
               toggleBtn.id = 'accessibility-toggle';
+              var currentLang = getCurrentLanguage();
               var t = translations[currentLang] || translations.en;
               toggleBtn.innerText = t.settingsButton;
               toggleBtn.onclick = function() {
@@ -220,7 +350,6 @@
               var panel = document.createElement('div');
               panel.id = 'accessibility-panel';
               
-              // ... (le reste du code pour les contrôles d'accessibilité reste inchangé) ...
               // Font size controls
               var fontGroup = document.createElement('div');
               fontGroup.className = 'control-group';
@@ -256,11 +385,11 @@
               btnInc.innerText = 'A+';
               btnInc.setAttribute('aria-label', 'Increase font size');
               btnInc.onclick = function() { 
-                var body = document.body;
-                var style = window.getComputedStyle(body, null).getPropertyValue('font-size');
-                var currentSize = parseFloat(style);
-                body.style.fontSize = (currentSize + 2) + 'px';
-                localStorage.setItem('fontSize', (currentSize + 2) + 'px');
+                 var body = document.body;
+                 var style = window.getComputedStyle(body, null).getPropertyValue('font-size');
+                 var currentSize = parseFloat(style);
+                 body.style.fontSize = (currentSize + 2) + 'px';
+                 localStorage.setItem('fontSize', (currentSize + 2) + 'px');
               };
 
               fontRow.appendChild(btnDec);
@@ -370,7 +499,7 @@
           });
         }
       ]
-    };
+    }
   </script>
   <!-- Docsify v4 -->
   <script src="//cdn.jsdelivr.net/npm/docsify@4"></script>
