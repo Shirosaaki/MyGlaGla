@@ -4,12 +4,19 @@ Makima is a person and about she :
 -- x takes ab.
 - When she talks :
 -- Columbina say x.
-- When she walks, she gets number :
+- When she walks, she gets number and another :
 -- x takes x + number.
+-- x takes x + another.
+- When she attack :
+-- Albedo leaves with 25.
+
+Toph nickname is test and takes ba.
+Albedo ba + 5.
 
 Toph doesn't have nickname and takes nothing.
 person has nickname me and borns and get 1.
 me talks.
-me walks 2.
+me walks 50 20.
 me talks.
+Columbina say me attack.
 Albedo leaves with 0.

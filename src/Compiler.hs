@@ -51,7 +51,7 @@ compileToLL outputPath ast = do
 collectVarTypes :: Ast -> Map.Map String Type -> Map.Map String Type
 collectVarTypes (ClassDef _ fields mCtor methods) structs =
     Map.unions $
-        map (\(_,v,_) -> collectVarTypes v structs) fields
+        map (\(n,v,t) -> Map.insert n t (collectVarTypes v structs)) fields
         ++ (case mCtor of { Nothing -> []; Just (_,_,b) -> [collectVarTypes b structs] })
         ++ map (\(_,_,b) -> collectVarTypes b structs) methods
 collectVarTypes (Block xs) structs = Map.unions (map (`collectVarTypes` structs) xs)
@@ -339,8 +339,7 @@ exprToASM (Call (AstSymbol func) args) locals labels vt fns
     | func == "array-type" = ["xorq %rax, %rax"]
     | Map.member func locals && null args = exprToASM (AstSymbol func) locals labels vt fns
     | otherwise =
-        let -- Resolution des méthodes (Mangling Class_Method)
-            mangled = case args of
+        let mangled = case args of
                 (AstSymbol objName : _) -> 
                     case Map.lookup objName vt of
                         Just (TCustom className) -> 
@@ -394,9 +393,11 @@ stmtToASM (Assign name val) uid labels locals _ _ _ vt li fns =
                     exitFailure
     in (uid, exprToASM val locals labels vt fns ++ ["movq %rax, -" ++ show off ++ "(%rbp)"], li)
 
--- Pattern peric
+-- Pattern peric (printf)
 stmtToASM (Call (AstSymbol "peric") [arg]) uid labels locals _ _ _ vt li fns =
-    let pts = case arg of { Call (AstSymbol "string-interp") p -> p; _ -> [arg] }
+    let pts = case arg of 
+                Call (AstSymbol "string-interp") p -> p
+                _ -> [arg]
         flat = flattenStringInterp pts
         fmt = buildFormatString vt flat ++ "\n"
         fmtIdx = maybe 0 id (lookup fmt labels)
@@ -407,9 +408,11 @@ stmtToASM (Call (AstSymbol "peric") [arg]) uid labels locals _ _ _ vt li fns =
             (AstFloat _ : _)  -> True
             _                 -> False
         callPrintf = 
-            [ "andq $-16, %rsp", "leaq LC" ++ show fmtIdx ++ "(%rip), %rdi" ]
+            [ "subq $8, %rsp" -- Alignement pile
+            , "leaq LC" ++ show fmtIdx ++ "(%rip), %rdi" 
+            ]
             ++ (if isFloat then ["movq %rax, %xmm0", "movb $1, %al"] else ["movq %rax, %rsi", "movb $0, %al"])
-            ++ ["call printf"]
+            ++ ["call printf", "addq $8, %rsp"]
     in (uid, evalArg ++ callPrintf, li)
 
 stmtToASM (Call (AstSymbol "assign") [Call (AstSymbol "array-access") [baseExpr, i], v]) uid labels locals _ _ _ vt li fns
@@ -442,7 +445,6 @@ stmtToASM (Call (AstSymbol "assign") [AstSymbol n, i, v]) uid labels locals _ _ 
 stmtToASM (Call (AstSymbol "assign") [AstSymbol n, v]) uid l loc _ ls le vt li fns = stmtToASM (Assign n v) uid l loc "" ls le vt li fns
 stmtToASM (Return v) uid l locals ret _ _ vt li fns = (uid, exprToASM v locals l vt fns ++ ["jmp " ++ ret], li)
 
--- Fix argument count for Break/Continue (10 args)
 stmtToASM Break uid _ _ _ _ (Just le) _ li _ = (uid, ["jmp " ++ le], li)
 stmtToASM Continue uid _ _ _ (Just ls) _ _ li _ = (uid, ["jmp " ++ ls], li)
 stmtToASM Break uid _ _ _ _ Nothing _ li _ = (uid, [], li)
@@ -528,7 +530,7 @@ buildFormatString vt (Call (AstSymbol "field-load") _ : xs) = "%ld" ++ buildForm
 buildFormatString vt (AstSymbol s : xs) = 
     let isStr = Map.lookup s vt == Just TString || " + " `isInfixOf` s
         isFloat = Map.lookup s vt == Just TFloat
-        fmt = if isStr then "%s" else if isFloat then "%.2f" else "%ld"
+        fmt = if isStr then "%s" else "%ld" -- Default to %ld
     in fmt ++ buildFormatString vt xs
 buildFormatString vt (Call (AstSymbol "+") _ : xs) = "%s" ++ buildFormatString vt xs
 buildFormatString vt (_ : xs) = "%ld" ++ buildFormatString vt xs
@@ -604,7 +606,7 @@ emitClassNew labels vt funcNames cn fields mCtor =
         nParams   = length params
         allocSize = ((nParams * 8 + 16 + 31) `div` 16) * 16 + 16
         paramRegs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"]
-        prologue  = [ funcName ++ ":", "\tpushq %rbp", "\tmovq %rsp, %rbp", "\tsubq $" ++ show allocSize ++ ", %rsp" ]
+        prologue  = [ funcName ++ ":", "\tpushq %rbp", "\tmovq %rsp, %rbp", "\tsubq $" ++ show allocSize ++ ", %rsp", "\tpushq %r15" ]
         saveParams = concat $ zipWith (\i r -> ["\tmovq " ++ r ++ ", -" ++ show ((i+1)*8) ++ "(%rbp)"]) [0..] (take nParams paramRegs)
         doMalloc  = [ "\tmovq $" ++ show sz ++ ", %rdi", "\tcall malloc", "\tmovq %rax, %r15" ]
         initFields = concatMap (\(i, (_, defVal, _)) -> 
@@ -616,7 +618,7 @@ emitClassNew labels vt funcNames cn fields mCtor =
             Just (_, _, body) ->
                 let (_, stmts, _) = emitStmts (lowerClassBody fields body) 0 labels paramMap retLabel Nothing Nothing vt Map.empty funcNames
                 in stmts
-        epilogue  = [ retLabel ++ ":", "\tmovq %r15, %rax", "\tleave", "\tret" ]
+        epilogue  = [ retLabel ++ ":", "\tmovq %r15, %rax", "\tpopq %r15", "\tleave", "\tret" ]
     in unlines $ prologue ++ saveParams ++ doMalloc ++ initFields ++ ctorStmts ++ epilogue
 
 emitClassMethod :: [(String, Int)] -> Map.Map String Type -> [String]
@@ -627,12 +629,12 @@ emitClassMethod labels vt funcNames cn fields (mName, params, body) =
         nExtra    = length params
         allocSize = ((nExtra * 8 + 16 + 31) `div` 16) * 16 + 16
         extraRegs = ["%rsi", "%rdx", "%rcx", "%r8", "%r9"]
-        prologue  = [ funcName ++ ":", "\tpushq %rbp", "\tmovq %rsp, %rbp", "\tsubq $" ++ show allocSize ++ ", %rsp", "\tmovq %rdi, %r15" ]
+        prologue  = [ funcName ++ ":", "\tpushq %rbp", "\tmovq %rsp, %rbp", "\tsubq $" ++ show allocSize ++ ", %rsp", "\tpushq %r15", "\tmovq %rdi, %r15" ]
         saveExtra = concat $ zipWith (\i r -> ["\tmovq " ++ r ++ ", -" ++ show ((i+1)*8) ++ "(%rbp)"]) [0..] (take nExtra extraRegs)
         paramMap  = Map.fromList $ zip params (map (\i -> (i+1)*8) [0..])
         retLabel  = ".Lret_" ++ funcName
         (_, bodyStmts, _) = emitStmts (lowerClassBody fields body) 0 labels paramMap retLabel Nothing Nothing vt Map.empty funcNames
-        epilogue  = [retLabel ++ ":", "\tleave", "\tret"]
+        epilogue  = [retLabel ++ ":", "\tpopq %r15", "\tleave", "\tret"]
     in unlines $ prologue ++ saveExtra ++ bodyStmts ++ epilogue
 
 lowerClassBody :: [(String, Ast, Type)] -> Ast -> Ast
