@@ -52,6 +52,10 @@ data Ast = Define String (Maybe Type) Ast           -- variable/function definit
          | StructFieldAssign String String Ast      -- struct.field = value
          | Block [Ast]                               -- sequence of statements
          | TypedVar String Type Ast                  -- variable with explicit type and init value
+         | ClassDef String                           -- nom de la classe
+                    [(String, Ast, Type)]            -- champs : (nom, valeur_défaut, type)
+                    (Maybe (String, [String], Ast))  -- constructeur optionnel : (nom, params, body)
+                    [(String, [String], Ast)]        -- méthodes : (nom, params, body)
          deriving (Show, Eq)
 
 
@@ -314,6 +318,48 @@ sexprToAST (SList [SSymbol "lambda", _])    = Left "lambda: missing body"
 sexprToAST (SList [SSymbol "lambda"])       = Left "lambda: missing parameters and body"
 sexprToAST (SList (SSymbol "lambda" : _))   = Left "lambda: bad syntax"
 
+-- -----------------------------------------------------------------------
+-- class : WaifuLang émet (class name field... constructor? method*...)
+-- -----------------------------------------------------------------------
+sexprToAST (SList (SSymbol "class" : SSymbol className : members)) =
+    let -- Sépare les membres en champs, constructeur, méthodes
+        parseMembers [] fields ctor methods = Right (fields, ctor, reverse methods)
+        parseMembers (m:ms) fields ctor methods = case m of
+            -- Champ : (field name val type)
+            SList [SSymbol "field", SSymbol fname, valS, tyS] ->
+                case (sexprToAST valS, parseTypeSExpr tyS) of
+                    (Right v, Right t) ->
+                        parseMembers ms (fields ++ [(fname, v, t)]) ctor methods
+                    (Left e, _) -> Left e
+                    (_, Left e) -> Left e
+            -- Constructeur : (constructor (params ...) body)
+            SList [SSymbol "constructor", SList (_ : paramSpecs), bodyS] ->
+                case (extractParams paramSpecs, sexprToAST bodyS) of
+                    (Right ps, Right b) ->
+                        parseMembers ms fields (Just ("born", ps, b)) methods
+                    (Left e, _) -> Left e
+                    (_, Left e) -> Left e
+            -- Méthode : (method name (params ...) body)
+            SList [SSymbol "method", SSymbol mname, SList (_ : paramSpecs), bodyS] ->
+                case (extractParams paramSpecs, sexprToAST bodyS) of
+                    (Right ps, Right b) ->
+                        parseMembers ms fields ctor ((mname, ps, b) : methods)
+                    (Left e, _) -> Left e
+                    (_, Left e) -> Left e
+            other -> Left ("class: membre inconnu : " ++ show other)
+
+        -- Extrait les noms de paramètres depuis [(name type) ...]
+        extractParams [] = Right []
+        extractParams (SList [SSymbol pname, _] : rest) =
+            fmap (pname :) (extractParams rest)
+        extractParams (other : _) =
+            Left ("class: param mal formé : " ++ show other)
+
+    in case parseMembers members [] Nothing [] of
+        Right (fields, ctor, methods) ->
+            Right (ClassDef className fields ctor methods)
+        Left err -> Left err
+
 -- generic application: (fn arg1 arg2 ...)
 sexprToAST (SList (fn:args)) =
     case sexprToAST fn of
@@ -363,6 +409,7 @@ evalAST env (IfElse cond thenExpr elseExpr) =
         Left err                    -> Left err
 evalAST env (Block stmts) = evalBlock env stmts
 evalAST env (Call fnAst args) = evalCall env fnAst args
+evalAST env (ClassDef _ _ _ _) = Right (AstVoid, env)  -- géré par le compilateur
 evalAST _ other = Left ("Unsupported AST node: " ++ show other)
 
 evalBlock :: Env -> [Ast] -> EvalResult

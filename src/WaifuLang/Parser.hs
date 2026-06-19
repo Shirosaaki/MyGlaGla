@@ -36,6 +36,8 @@ keywords =
   , "something", "operate", "incremented", "by", "each", "time", "equal"
   , "equals", "greater", "lower", "than", "to", "with", "doesn't", "have"
   , "has", "nothing"
+  -- Mots-clés OOP
+  , "about", "borns", "view", "When", "moves"
   ]
 
 identifier :: Parser String
@@ -44,6 +46,18 @@ identifier = (lexeme . try) $ do
   if name `elem` keywords
     then fail $ "mot réservé inattendu : " ++ name
     else return name
+
+-- ============================================================================
+-- HELPERS LEXICAUX
+-- ============================================================================
+
+-- Matche exactement "-" sans consommer "--"
+dashOnly :: Parser ()
+dashOnly = void . lexeme . try $ char '-' *> notFollowedBy (char '-')
+
+-- Matche exactement "--" (corps de méthode)
+dashDash :: Parser ()
+dashDash = void . lexeme $ string "--"
 
 -- ============================================================================
 -- EXPRESSIONS
@@ -89,21 +103,11 @@ parseAtom = choice
 
 -- ============================================================================
 -- CONDITIONS LOGIQUES
---
--- Supporte le sucre syntaxique :
---   "a equal to 4 or equal to 9"
--- équivalent à :
---   "a equal to 4 or a equal to 9"
---
--- Après un "or"/"and", si on ne trouve pas d'expression+opérateur mais
--- directement un opérateur de comparaison, on réutilise l'opérande gauche
--- du dernier atome de comparaison.
 -- ============================================================================
 
 parseFullCondition :: Parser SExpr
 parseFullCondition = parseLogicOr Nothing
 
--- lastLeft : dernier opérande gauche vu, propagé pour le sucre syntaxique
 parseLogicOr :: Maybe SExpr -> Parser SExpr
 parseLogicOr lastLeft = do
   left <- parseLogicAnd lastLeft
@@ -126,14 +130,11 @@ parseLogicAtom lastLeft = choice
   , parseSingleComparison lastLeft
   ]
 
--- Extrait l'opérande gauche d'un nœud de comparaison pour le sucre syntaxique.
 extractLeft :: SExpr -> Maybe SExpr
 extractLeft (SList [SSymbol op, l, _])
   | op `elem` ["==", "!=", "<", ">", "<=", ">="] = Just l
 extractLeft _ = Nothing
 
--- Tente d'abord la forme complète "expr op expr".
--- Si lastLeft est fourni, tente aussi la forme courte "op expr" (sans expr gauche).
 parseSingleComparison :: Maybe SExpr -> Parser SExpr
 parseSingleComparison lastLeft = choice
   [ try fullComparison
@@ -148,7 +149,6 @@ parseSingleComparison lastLeft = choice
       op    <- parseComparisonOp
       right <- parseExpression
       return $ SList [SSymbol op, left, right]
-
     shortComparison left = do
       _     <- many . try $ reserved "is" <|> reserved "that"
       op    <- parseComparisonOp
@@ -175,7 +175,8 @@ parseComparisonOp = choice $ map try
 
 parseStatement :: Parser SExpr
 parseStatement = sc >> choice
-  [ try parseIf
+  [ try parseClass       -- avant les autres : "X nickname is Y and about Z :"
+  , try parseIf
   , try parseFor
   , try parseWhile
   , try parseVariable
@@ -184,7 +185,7 @@ parseStatement = sc >> choice
   , try parseReturn
   ]
 
--- Bloc indenté ":" + lignes "- stmt", ou statement inline unique.
+-- Bloc de niveau 1 : ":" suivi de "- stmt" répétés, ou stmt inline.
 parseBody :: Parser SExpr
 parseBody = choice
   [ do
@@ -197,12 +198,17 @@ parseBody = choice
       return $ SList [SSymbol "block", stmt]
   ]
 
+-- Bloc de niveau 2 (corps de méthode) : ":" suivi de "-- stmt" répétés.
+-- Utilisé à l'intérieur d'une classe où "-" est déjà consommé par le membre.
+parseMethodBody :: Parser SExpr
+parseMethodBody = do
+  _ <- symbol ":"
+  sc
+  stmts <- many . try $ sc >> dashDash >> parseStatement
+  return $ SList (SSymbol "block" : stmts)
+
 -- ============================================================================
--- IF / ELSE IF / ELSE
---
--- parseAlt tente, via try, de parser une branche "else-if" ou "else".
--- Pas de lookAhead : on laisse les try se charger de l'échec propre.
--- Si aucune branche ne correspond, on retourne SList [] (pas d'alternative).
+-- IF / ELSE
 -- ============================================================================
 
 parseIf :: Parser SExpr
@@ -217,11 +223,7 @@ parseIf = do
 
 parseAlt :: Parser SExpr
 parseAlt = option (SList []) $ try parseElseDifferent
--- Note : en WaifuLang il n'existe pas de "else if" syntaxique.
--- Un nouveau "X thinks that ..." est toujours un statement indépendant.
--- Seul "X thinks something different so" constitue une branche else.
 
--- "X thinks something different so <body>"
 parseElseDifferent :: Parser SExpr
 parseElseDifferent = do
   _ <- identifier
@@ -321,8 +323,6 @@ parsePrint = do
   reserved "say"
   expr <- parseExpression
   dot
-  -- (string-interp expr) : expr est une expression plate, pas une liste emballée.
-  -- Le compilateur attend Call "peric" [Call "string-interp" [part...]]
   return $ SList [SSymbol "call", SSymbol "peric",
                   SList [SList [SSymbol "string-interp", expr]]]
 
@@ -333,6 +333,113 @@ parseReturn = do
   expr <- parseExpression
   dot
   return $ SList [SSymbol "return", expr]
+
+-- ============================================================================
+-- CLASSES (OOP)
+--
+-- Syntaxe :
+--   <waifu> nickname is <className> and about <pronoun> :
+--   - <pronoun> has <waifu> <field> equal to <expr>.      ← champ
+--   - When <pronoun> borns (<waifu> <p> and)* so :        ← constructeur
+--   -- <stmt>
+--   - When <pronoun> <method> :                           ← méthode
+--   -- <stmt>
+--
+-- SExpr émise :
+--   (class <className>
+--     (fields (field <name> <defaultVal> <type>) ...)
+--     (constructor (params (<p> <type>) ...) <body>)
+--     (method <name> (params (<p> <type>) ...) <body>)
+--     ...)
+-- ============================================================================
+
+parseClass :: Parser SExpr
+parseClass = do
+  _         <- identifier                          -- nom de la waifu déclarante
+  reserved "nickname" *> reserved "is"
+  className <- identifier                          -- nom de la classe
+  reserved "and" *> reserved "about"
+  pronoun   <- identifier                          -- pronom (she/he/it/...)
+  _ <- symbol ":"
+  sc
+  members <- many . try $ sc >> dashOnly >> parseClassMember pronoun
+  return $ SList ([SSymbol "class", SSymbol className] ++ members)
+
+-- Un membre de classe : champ ou méthode (dont constructeur).
+parseClassMember :: String -> Parser SExpr
+parseClassMember pronoun = choice
+  [ try (parseField pronoun)
+  , try (parseMethod pronoun)
+  ]
+
+-- -----------------------------------------------------------------------
+-- Champ : "<pronoun> has <waifu> <fieldName> equal to <expr>."
+-- -----------------------------------------------------------------------
+-- Émet : (field <fieldName> <defaultVal> <type>)
+parseField :: String -> Parser SExpr
+parseField pronoun = do
+  reserved pronoun
+  reserved "has"
+  _         <- identifier    -- waifu décorative (ex: "Mikasa")
+  fieldName <- identifier
+  reserved "equal" *> reserved "to"
+  val       <- parseExpression
+  dot
+  let ty = case val of { SFloat _ -> SSymbol "float"; _ -> SSymbol "int" }
+  return $ SList [SSymbol "field", SSymbol fieldName, val, ty]
+
+-- -----------------------------------------------------------------------
+-- Méthode / Constructeur :
+--   "When <pronoun> borns (<pronoun> view <waifu> <p> (and <waifu> <p>)*)? so :"
+--   "When <pronoun> <methodName> (paramList)? :"
+-- -----------------------------------------------------------------------
+-- Émet :
+--   (constructor (params (p1 int) (p2 int) ...) <body>)
+--   (method <name> (params (p1 int) ...) <body>)
+parseMethod :: String -> Parser SExpr
+parseMethod pronoun = do
+  reserved "When"
+  reserved pronoun
+  -- Constructeur ou méthode ordinaire ?
+  isConstructor <- optional . try $ reserved "borns"
+  case isConstructor of
+    Just () -> do
+      params <- parseParamList pronoun
+      reserved "so"
+      body <- parseMethodBody
+      return $ SList [SSymbol "constructor",
+                      SList (SSymbol "params" : params),
+                      body]
+    Nothing -> do
+      methodName <- identifier
+      params     <- parseParamList pronoun
+      optional (reserved "so")
+      body <- parseMethodBody
+      return $ SList [SSymbol "method", SSymbol methodName,
+                      SList (SSymbol "params" : params),
+                      body]
+
+-- -----------------------------------------------------------------------
+-- Liste de paramètres (optionnelle) :
+--   "view <waifu> <p1> and <waifu> <p2> ..."
+-- Le pronom n'apparaît PAS devant "view" dans la syntaxe réelle.
+-- -----------------------------------------------------------------------
+parseParamList :: String -> Parser [SExpr]
+parseParamList _pronoun = do
+  hasParams <- optional . try $ reserved "view"
+  case hasParams of
+    Nothing -> return []
+    Just () -> do
+      first <- parseOneParam
+      rest  <- many . try $ reserved "and" >> parseOneParam
+      return (first : rest)
+  where
+    -- "<waifu> <paramName>" — la waifu est décorative
+    parseOneParam :: Parser SExpr
+    parseOneParam = do
+      _ <- identifier       -- waifu décorative (ex: "Mikasa")
+      p <- identifier       -- nom du paramètre
+      return $ SList [SSymbol p, SSymbol "int"]
 
 -- ============================================================================
 -- EXPORTS
