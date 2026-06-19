@@ -35,9 +35,8 @@ keywords =
   , "perform", "until", "will", "finish", "say", "leave", "different"
   , "something", "operate", "incremented", "by", "each", "time", "equal"
   , "equals", "greater", "lower", "than", "to", "with", "doesn't", "have"
-  , "has", "nothing"
-  -- Mots-clés OOP
-  , "about", "borns", "view", "When", "moves"
+  , "has", "nothing", "a", "an", "about", "borns", "view", "When", "get"
+  , "Albedo"
   ]
 
 identifier :: Parser String
@@ -46,18 +45,6 @@ identifier = (lexeme . try) $ do
   if name `elem` keywords
     then fail $ "mot réservé inattendu : " ++ name
     else return name
-
--- ============================================================================
--- HELPERS LEXICAUX
--- ============================================================================
-
--- Matche exactement "-" sans consommer "--"
-dashOnly :: Parser ()
-dashOnly = void . lexeme . try $ char '-' *> notFollowedBy (char '-')
-
--- Matche exactement "--" (corps de méthode)
-dashDash :: Parser ()
-dashDash = void . lexeme $ string "--"
 
 -- ============================================================================
 -- EXPRESSIONS
@@ -102,58 +89,20 @@ parseAtom = choice
   ]
 
 -- ============================================================================
--- CONDITIONS LOGIQUES
+-- CONDITIONS (Pour les IF et WHILE)
 -- ============================================================================
 
 parseFullCondition :: Parser SExpr
-parseFullCondition = parseLogicOr Nothing
-
-parseLogicOr :: Maybe SExpr -> Parser SExpr
-parseLogicOr lastLeft = do
-  left <- parseLogicAnd lastLeft
-  rest <- optional . try $ reserved "or" >> parseLogicOr (extractLeft left)
-  return $ case rest of
-    Nothing    -> left
-    Just right -> SList [SSymbol "||", left, right]
-
-parseLogicAnd :: Maybe SExpr -> Parser SExpr
-parseLogicAnd lastLeft = do
-  left <- parseLogicAtom lastLeft
-  rest <- optional . try $ reserved "and" >> optional (reserved "that") >> parseLogicAnd (extractLeft left)
-  return $ case rest of
-    Nothing    -> left
-    Just right -> SList [SSymbol "&&", left, right]
-
-parseLogicAtom :: Maybe SExpr -> Parser SExpr
-parseLogicAtom lastLeft = choice
-  [ try $ symbol "(" *> optional (reserved "that") *> parseFullCondition <* symbol ")"
-  , parseSingleComparison lastLeft
-  ]
-
-extractLeft :: SExpr -> Maybe SExpr
-extractLeft (SList [SSymbol op, l, _])
-  | op `elem` ["==", "!=", "<", ">", "<=", ">="] = Just l
-extractLeft _ = Nothing
-
-parseSingleComparison :: Maybe SExpr -> Parser SExpr
-parseSingleComparison lastLeft = choice
-  [ try fullComparison
-  , case lastLeft of
-      Just l  -> shortComparison l
-      Nothing -> fail "comparaison attendue"
-  ]
-  where
-    fullComparison = do
-      left  <- parseExpression
-      _     <- many . try $ reserved "is" <|> reserved "that"
-      op    <- parseComparisonOp
+parseFullCondition = do
+  left <- parseExpression
+  op <- optional . try $ do
+    _ <- many (reserved "is" <|> reserved "that")
+    parseComparisonOp
+  case op of
+    Nothing -> return left
+    Just o -> do
       right <- parseExpression
-      return $ SList [SSymbol op, left, right]
-    shortComparison left = do
-      _     <- many . try $ reserved "is" <|> reserved "that"
-      op    <- parseComparisonOp
-      right <- parseExpression
-      return $ SList [SSymbol op, left, right]
+      return $ SList [SSymbol o, left, right]
 
 parseComparisonOp :: Parser String
 parseComparisonOp = choice $ map try
@@ -175,17 +124,18 @@ parseComparisonOp = choice $ map try
 
 parseStatement :: Parser SExpr
 parseStatement = sc >> choice
-  [ try parseClass       -- avant les autres : "X nickname is Y and about Z :"
+  [ try parseClass
   , try parseIf
-  , try parseFor
   , try parseWhile
+  , try parseNewInstance
+  , try parseMethodCall
   , try parseVariable
   , try parseAssignment
   , try parsePrint
   , try parseReturn
+  , try parseExit
   ]
 
--- Bloc de niveau 1 : ":" suivi de "- stmt" répétés, ou stmt inline.
 parseBody :: Parser SExpr
 parseBody = choice
   [ do
@@ -198,87 +148,114 @@ parseBody = choice
       return $ SList [SSymbol "block", stmt]
   ]
 
--- Bloc de niveau 2 (corps de méthode) : ":" suivi de "-- stmt" répétés.
--- Utilisé à l'intérieur d'une classe où "-" est déjà consommé par le membre.
 parseMethodBody :: Parser SExpr
 parseMethodBody = do
   _ <- symbol ":"
   sc
-  stmts <- many . try $ sc >> dashDash >> parseStatement
+  stmts <- many . try $ sc >> string "--" >> sc >> parseStatement
   return $ SList (SSymbol "block" : stmts)
 
 -- ============================================================================
--- IF / ELSE
+-- CLASSES & OOP
 -- ============================================================================
 
-parseIf :: Parser SExpr
-parseIf = do
-  _    <- identifier
-  reserved "thinks"
-  cond <- optional (reserved "that") *> parseFullCondition
-  reserved "so"
-  body <- parseBody
-  alt  <- parseAlt
-  return $ SList [SSymbol "if", cond, body, alt]
+parseClass :: Parser SExpr
+parseClass = do
+  _         <- identifier
+  reserved "is"
+  _         <- reserved "a" <|> reserved "an"
+  className <- identifier
+  reserved "and" *> reserved "about"
+  pronoun   <- identifier
+  _         <- symbol ":"
+  sc
+  members   <- many . try $ sc >> symbol "-" >> parseClassMember pronoun
+  return $ SList ([SSymbol "class", SSymbol className] ++ members)
 
-parseAlt :: Parser SExpr
-parseAlt = option (SList []) $ try parseElseDifferent
+parseClassMember :: String -> Parser SExpr
+parseClassMember pronoun = choice
+  [ try (parseField pronoun)
+  , try (parseMethod pronoun)
+  ]
 
-parseElseDifferent :: Parser SExpr
-parseElseDifferent = do
-  _ <- identifier
-  reserved "thinks" *> reserved "something" *> reserved "different"
-  reserved "so"
-  body <- parseBody
-  alt  <- parseAlt
-  return $ SList [SSymbol "if", SList [SSymbol "==", SInt 1, SInt 1], body, alt]
-
--- ============================================================================
--- WHILE
--- ============================================================================
-
-parseWhile :: Parser SExpr
-parseWhile = do
-  waifu <- identifier
-  reserved "perform" *> reserved "until"
-  cond  <- parseFullCondition
-  dot
-  body  <- manyTill (sc >> parseStatement) (try $ endWhile waifu)
-  return $ SList [SSymbol "call", SSymbol "while",
-                  SList [cond, SList (SSymbol "block" : body)]]
-  where
-    endWhile w =
-      sc *> reserved w *> reserved "finish" *> reserved "to" *> reserved "perform" *> dot
-
--- ============================================================================
--- FOR
--- ============================================================================
-
-parseFor :: Parser SExpr
-parseFor = do
-  waifu <- identifier
-  reserved "will" *> reserved "operate" *> reserved "until"
-  _     <- identifier
-  reserved "nickname"
-  v     <- identifier
+parseField :: String -> Parser SExpr
+parseField pronoun = do
+  reserved pronoun
+  reserved "has"
+  mType <- optional (try identifier)
+  fieldName <- identifier
   reserved "equal" *> reserved "to"
-  start <- parseExpression
-  _     <- many . try $ reserved "is" <|> reserved "that"
-  _     <- parseComparisonOp
-  limit <- parseExpression
-  reserved "and" *> reserved "incremented" *> reserved "by"
-  _     <- lexeme (L.decimal :: Parser Integer)
-  reserved "each" *> reserved "time" *> dot
-  body  <- manyTill (sc >> parseStatement) (try $ endFor waifu)
-  return $ SList [SSymbol "call", SSymbol "for",
-                  SList [SSymbol v, start, limit, SList (SSymbol "block" : body)]]
+  val <- parseExpression
+  dot
+  let ty = case mType of
+             Just t  -> SSymbol t
+             -- FIX: Wrapping "float" and "int" in SSymbol
+             Nothing -> case val of { SFloat _ -> SSymbol "float"; _ -> SSymbol "int" }
+  return $ SList [SSymbol "field", SSymbol fieldName, val, ty]
+
+parseMethod :: String -> Parser SExpr
+parseMethod pronoun = do
+  reserved "When"
+  reserved pronoun
+  isCtor <- optional . try $ reserved "borns"
+  case isCtor of
+    Just () -> do
+      params <- parseParamList
+      _ <- optional (reserved "so") -- Ajout de _ <-
+      body <- parseMethodBody
+      return $ SList [SSymbol "constructor", SList (SSymbol "params" : params), body]
+    Nothing -> do
+      mName  <- identifier
+      params <- parseParamList
+      _ <- optional (reserved "so") -- Ajout de _ <-
+      body <- parseMethodBody
+      return $ SList [SSymbol "method", SSymbol mName, SList (SSymbol "params" : params), body]
+      
+parseParamList :: Parser [SExpr]
+parseParamList = do
+  hasParams <- optional . try $ reserved "view"
+  case hasParams of
+    Nothing -> return []
+    Just () -> do
+      p1   <- parseOneParam
+      rest <- many . try $ reserved "and" >> parseOneParam
+      return (p1 : rest)
   where
-    endFor w =
-      sc *> reserved w *> reserved "finish" *> reserved "to" *> reserved "operate" *> dot
+    parseOneParam = do
+      mType <- optional (try identifier)
+      pName <- identifier
+      return $ SList [SSymbol pName, maybe (SSymbol "int") SSymbol mType]
+
+parseNewInstance :: Parser SExpr
+parseNewInstance = do
+  className <- identifier
+  reserved "has" *> reserved "nickname"
+  varName   <- identifier
+  reserved "and" *> reserved "borns"
+  args <- option [] $ try $ reserved "and" *> reserved "get" *> (parseExpression `sepBy` reserved "and")
+  dot
+  return $ SList [SSymbol "define", SSymbol varName,
+                  SList [SSymbol "call", SSymbol (className ++ "_new"), SList args],
+                  SSymbol className]
+
+parseMethodCall :: Parser SExpr
+parseMethodCall = do
+  varName <- identifier
+  mName   <- identifier
+  args    <- option [] $ try $ reserved "and" *> reserved "get" *> (parseExpression `sepBy` reserved "and")
+  dot
+  return $ SList [SSymbol "call", SSymbol mName, SList (SSymbol varName : args)]
 
 -- ============================================================================
--- VARIABLES & ASSIGNATION
+-- AUTRES STATEMENTS
 -- ============================================================================
+
+parseExit :: Parser SExpr
+parseExit = do
+  reserved "Albedo"
+  val <- parseExpression
+  dot
+  return $ SList [SSymbol "return", val]
 
 parseVariable :: Parser SExpr
 parseVariable = do
@@ -288,34 +265,42 @@ parseVariable = do
         reserved "nickname" *> reserved "is"
         v <- identifier
         reserved "and" *> reserved "takes"
-        r <- choice
-          [ try (reserved "nothing") *> return (SList [SSymbol "define", SSymbol v, SSymbol "void"])
-          , do
-              val <- parseExpression
-              let ty = case val of { SFloat _ -> "float"; _ -> "int" }
-              return $ SList [SSymbol "define", SSymbol v, val, SSymbol ty]
-          ]
-        return r
+        val <- parseExpression
+        return $ SList [SSymbol "define", SSymbol v, val, SSymbol "int"]
     , do
         reserved "doesn't" *> reserved "have" *> reserved "nickname"
-        reserved "and" *> reserved "has"
-        v <- identifier
-        return $ SList [SSymbol "define", SSymbol v, SSymbol "int"]
+        reserved "and" *> reserved "takes" *> reserved "nothing"
+        return $ SList [SSymbol "block"]
     ]
   dot
   return res
 
 parseAssignment :: Parser SExpr
 parseAssignment = do
-  v   <- identifier
+  v <- identifier
   reserved "takes"
   val <- parseExpression
   dot
   return $ SList [SSymbol "assign", SSymbol v, val]
 
--- ============================================================================
--- PRINT / RETURN
--- ============================================================================
+parseIf :: Parser SExpr
+parseIf = do
+  _ <- identifier
+  reserved "thinks"
+  cond <- optional (reserved "that") *> parseFullCondition
+  reserved "so"
+  body <- parseBody
+  return $ SList [SSymbol "if", cond, body, SList []]
+
+parseWhile :: Parser SExpr
+parseWhile = do
+  waifu <- identifier
+  reserved "perform"
+  reserved "until"
+  cond <- parseFullCondition
+  dot
+  body <- manyTill (sc >> parseStatement) (try $ reserved waifu >> reserved "finish")
+  return $ SList [SSymbol "call", SSymbol "while", SList [cond, SList (SSymbol "block" : body)]]
 
 parsePrint :: Parser SExpr
 parsePrint = do
@@ -323,136 +308,26 @@ parsePrint = do
   reserved "say"
   expr <- parseExpression
   dot
-  return $ SList [SSymbol "call", SSymbol "peric",
-                  SList [SList [SSymbol "string-interp", expr]]]
+  return $ SList [SSymbol "call", SSymbol "peric", SList [expr]]
 
 parseReturn :: Parser SExpr
 parseReturn = do
   _ <- identifier
-  reserved "leave" *> reserved "with"
+  reserved "leave" >> reserved "with"
   expr <- parseExpression
   dot
   return $ SList [SSymbol "return", expr]
-
--- ============================================================================
--- CLASSES (OOP)
---
--- Syntaxe :
---   <waifu> nickname is <className> and about <pronoun> :
---   - <pronoun> has <waifu> <field> equal to <expr>.      ← champ
---   - When <pronoun> borns (<waifu> <p> and)* so :        ← constructeur
---   -- <stmt>
---   - When <pronoun> <method> :                           ← méthode
---   -- <stmt>
---
--- SExpr émise :
---   (class <className>
---     (fields (field <name> <defaultVal> <type>) ...)
---     (constructor (params (<p> <type>) ...) <body>)
---     (method <name> (params (<p> <type>) ...) <body>)
---     ...)
--- ============================================================================
-
-parseClass :: Parser SExpr
-parseClass = do
-  _         <- identifier                          -- nom de la waifu déclarante
-  reserved "nickname" *> reserved "is"
-  className <- identifier                          -- nom de la classe
-  reserved "and" *> reserved "about"
-  pronoun   <- identifier                          -- pronom (she/he/it/...)
-  _ <- symbol ":"
-  sc
-  members <- many . try $ sc >> dashOnly >> parseClassMember pronoun
-  return $ SList ([SSymbol "class", SSymbol className] ++ members)
-
--- Un membre de classe : champ ou méthode (dont constructeur).
-parseClassMember :: String -> Parser SExpr
-parseClassMember pronoun = choice
-  [ try (parseField pronoun)
-  , try (parseMethod pronoun)
-  ]
-
--- -----------------------------------------------------------------------
--- Champ : "<pronoun> has <waifu> <fieldName> equal to <expr>."
--- -----------------------------------------------------------------------
--- Émet : (field <fieldName> <defaultVal> <type>)
-parseField :: String -> Parser SExpr
-parseField pronoun = do
-  reserved pronoun
-  reserved "has"
-  _         <- identifier    -- waifu décorative (ex: "Mikasa")
-  fieldName <- identifier
-  reserved "equal" *> reserved "to"
-  val       <- parseExpression
-  dot
-  let ty = case val of { SFloat _ -> SSymbol "float"; _ -> SSymbol "int" }
-  return $ SList [SSymbol "field", SSymbol fieldName, val, ty]
-
--- -----------------------------------------------------------------------
--- Méthode / Constructeur :
---   "When <pronoun> borns (<pronoun> view <waifu> <p> (and <waifu> <p>)*)? so :"
---   "When <pronoun> <methodName> (paramList)? :"
--- -----------------------------------------------------------------------
--- Émet :
---   (constructor (params (p1 int) (p2 int) ...) <body>)
---   (method <name> (params (p1 int) ...) <body>)
-parseMethod :: String -> Parser SExpr
-parseMethod pronoun = do
-  reserved "When"
-  reserved pronoun
-  -- Constructeur ou méthode ordinaire ?
-  isConstructor <- optional . try $ reserved "borns"
-  case isConstructor of
-    Just () -> do
-      params <- parseParamList pronoun
-      reserved "so"
-      body <- parseMethodBody
-      return $ SList [SSymbol "constructor",
-                      SList (SSymbol "params" : params),
-                      body]
-    Nothing -> do
-      methodName <- identifier
-      params     <- parseParamList pronoun
-      optional (reserved "so")
-      body <- parseMethodBody
-      return $ SList [SSymbol "method", SSymbol methodName,
-                      SList (SSymbol "params" : params),
-                      body]
-
--- -----------------------------------------------------------------------
--- Liste de paramètres (optionnelle) :
---   "view <waifu> <p1> and <waifu> <p2> ..."
--- Le pronom n'apparaît PAS devant "view" dans la syntaxe réelle.
--- -----------------------------------------------------------------------
-parseParamList :: String -> Parser [SExpr]
-parseParamList _pronoun = do
-  hasParams <- optional . try $ reserved "view"
-  case hasParams of
-    Nothing -> return []
-    Just () -> do
-      first <- parseOneParam
-      rest  <- many . try $ reserved "and" >> parseOneParam
-      return (first : rest)
-  where
-    -- "<waifu> <paramName>" — la waifu est décorative
-    parseOneParam :: Parser SExpr
-    parseOneParam = do
-      _ <- identifier       -- waifu décorative (ex: "Mikasa")
-      p <- identifier       -- nom du paramètre
-      return $ SList [SSymbol p, SSymbol "int"]
 
 -- ============================================================================
 -- EXPORTS
 -- ============================================================================
 
 parseSExprEither :: String -> Either String SExpr
-parseSExprEither src =
-  case parse (sc >> parseStatement <* eof) "<waifu>" src of
-    Left err -> Left (errorBundlePretty err)
-    Right v  -> Right v
+parseSExprEither src = case parse (sc >> parseStatement <* eof) "<waifu>" src of
+  Left err -> Left (errorBundlePretty err)
+  Right v  -> Right v
 
 parseSExprMultipleEither :: String -> Either String [SExpr]
-parseSExprMultipleEither src =
-  case parse (sc >> many (sc >> parseStatement) <* sc <* eof) "<waifu>" src of
-    Left err -> Left (errorBundlePretty err)
-    Right v  -> Right v
+parseSExprMultipleEither src = case parse (sc >> many (sc >> parseStatement) <* sc <* eof) "<waifu>" src of
+  Left err -> Left (errorBundlePretty err)
+  Right v  -> Right v
