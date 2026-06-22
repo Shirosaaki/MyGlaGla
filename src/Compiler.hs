@@ -18,13 +18,20 @@ import Data.Word (Word64)
 import Foreign.Ptr (castPtr)
 import Foreign.Marshal.Array (allocaArray)
 import Foreign.Storable (poke, peek)
+import WaifuRuntime (waifuRuntimeASM)
+import ListCompiler (inferValTag, emitListPush, emitTaggedPair, listRuntimeBuiltins, listErrorStrings)
 
 -- =============================================================================
 -- Configuration
 -- =============================================================================
 
 builtIns :: [String]
-builtIns = ["renaud", "romaric", "marvin", "str_concat", "+", "-", "*", "/", "%", "==", "<", ">", "<=", ">=", "!=", "&&", "||", "assign", "define", "array-type", "array-access", "array-decl", "string-interp", "for", "field-load", "field-store", "peric"]
+builtIns =
+  [ "renaud", "romaric", "marvin", "str_concat", "int_to_str", "+", "-", "*", "/", "%"
+  , "==", "<", ">", "<=", ">=", "!=", "&&", "||", "assign", "define", "array-type"
+  , "array-access", "array-decl", "string-interp", "for", "field-load", "field-store"
+  , "peric", "darkness"
+  ] ++ listRuntimeBuiltins
 
 floatToBits :: Double -> IO Word64
 floatToBits d = allocaArray 1 $ \ptr -> do
@@ -60,12 +67,20 @@ collectVarTypes (Define n (Just t) val) structs =
     Map.insert n t (collectVarTypes val structs)
 collectVarTypes (Define _ Nothing val) structs = collectVarTypes val structs
 collectVarTypes (AstLambda _ body) structs = collectVarTypes body structs
-collectVarTypes (Assign n (AstString _)) _ = Map.singleton n TString
+collectVarTypes (Assign n val) vt | isStringAst vt val = Map.singleton n TString
 collectVarTypes (Assign n (Call (AstSymbol f) _)) _ 
-    | f `elem` ["renaud", "romaric", "str_concat", "+"] = Map.singleton n TString
+    | f `elem` ["renaud", "romaric", "str_concat"] = Map.singleton n TString
     | otherwise = Map.empty
 collectVarTypes (Call (AstSymbol "define") [AstSymbol n, Call (AstSymbol "array-type") _]) _ = 
     Map.singleton n (TCustom "int[]")
+collectVarTypes (Call (AstSymbol "list-create") (AstSymbol n : _)) _ =
+    Map.singleton n (TCustom "list")
+collectVarTypes (Call (AstSymbol "map-create") (AstSymbol n : _)) _ =
+    Map.singleton n (TCustom "map")
+collectVarTypes (Call (AstSymbol "str-split") _) _ =
+    Map.empty
+collectVarTypes (Call (AstSymbol "for-each") [AstSymbol v, _, body]) structs =
+    Map.insert v (TCustom "value") (collectVarTypes body structs)
 collectVarTypes (Call (AstSymbol "for") [AstSymbol v, _, _, body]) structs = 
     Map.insert v TInt (collectVarTypes body structs)
 collectVarTypes (For v _ body) structs = 
@@ -84,7 +99,10 @@ collectNamesForLocals (Assign n _) = [n]
 collectNamesForLocals (Call (AstSymbol "define") (AstSymbol n : _)) = [n]
 collectNamesForLocals (Call (AstSymbol "assign") [Call (AstSymbol "array-access") [AstSymbol n, _], _]) = [n]
 collectNamesForLocals (Call (AstSymbol "assign") [AstSymbol n, _]) = [n]
+collectNamesForLocals (Call (AstSymbol "list-create") (AstSymbol n : _)) = [n]
+collectNamesForLocals (Call (AstSymbol "map-create") (AstSymbol n : _)) = [n]
 collectNamesForLocals (Call (AstSymbol "for") [AstSymbol v, _, _, body]) = v : collectNamesForLocals body
+collectNamesForLocals (Call (AstSymbol "for-each") [AstSymbol v, _, body]) = v : collectNamesForLocals body
 collectNamesForLocals (Call (AstSymbol "while") [_, body]) = collectNamesForLocals body
 collectNamesForLocals (For v _ body) = v : collectNamesForLocals body
 collectNamesForLocals (While _ body) = collectNamesForLocals body
@@ -134,9 +152,9 @@ emitASM ast =
     let ast' = ast
         varTypes = collectVarTypes ast' Map.empty
         funcNames = collectFunctionNames ast'
-        strs = uniqueList (collectStrings ast' varTypes)
+        strs = uniqueList (collectStrings ast' varTypes) ++ listErrorStrings
         labels = zip strs [0..]
-    in concatMap (emitData) labels ++ "\n" ++ emitText ast' labels varTypes funcNames ++ "\n" ++ builtInFunctions
+    in concatMap (emitData) labels ++ "\n" ++ emitText ast' labels varTypes funcNames ++ "\n" ++ builtInFunctions ++ "\n" ++ waifuRuntimeASM
 
 emitData :: (String, Int) -> String
 emitData (s, i) = ".globl LC" ++ show i ++ "\nLC" ++ show i ++ ": .string \"" ++ escapeASM s ++ "\"\n"
@@ -275,9 +293,14 @@ exprToASM (AstSymbol v) locals labels vt fns
 exprToASM (AstString s) _ labels _ _ = ["leaq LC" ++ show (maybe 0 id (lookup s labels)) ++ "(%rip), %rax"]
 
 exprToASM (Call (AstSymbol "+") [lhs, rhs]) locals labels vt fns =
-    let isStr a = case a of { AstString _ -> True; AstSymbol s -> Map.lookup s vt == Just TString; Call (AstSymbol f) _ -> f `elem` ["renaud","romaric","str_concat","+"]; _ -> False }
-    in if isStr lhs || isStr rhs
-       then exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt fns ++ ["movq %rax, %rsi", "popq %rdi", "call str_concat"]
+    let strL = isStringAst vt lhs
+        strR = isStringAst vt rhs
+        asStr e isStrSide =
+            if isStrSide
+            then exprToASM e locals labels vt fns
+            else exprToASM e locals labels vt fns ++ ["pushq %rax", "popq %rdi", "call int_to_str"]
+    in if strL || strR
+       then asStr lhs strL ++ ["pushq %rax"] ++ asStr rhs strR ++ ["movq %rax, %rsi", "popq %rdi", "call str_concat"]
        else exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++ exprToASM rhs locals labels vt fns ++ ["movq %rax, %rdx", "popq %rax", "addq %rdx, %rax"]
 
 exprToASM (Call (AstSymbol "-") [lhs, rhs]) locals labels vt fns =
@@ -318,6 +341,84 @@ exprToASM (Call (AstSymbol "&&") [lhs, rhs]) locals labels vt fns =
 exprToASM (Call (AstSymbol "||") [lhs, rhs]) locals labels vt fns =
     exprToASM lhs locals labels vt fns ++ ["pushq %rax"] ++
     exprToASM rhs locals labels vt fns ++ ["movq %rax, %rdx", "popq %rax", "orq %rdx, %rax"]
+
+exprToASM (Call (AstSymbol "list-at") [AstSymbol name, idxExpr]) locals labels vt fns =
+    let listOff = Map.findWithDefault 0 name locals
+        isMap = Map.lookup name vt == Just (TCustom "map")
+    in if isMap
+       then exprToASM idxExpr locals labels vt fns ++
+            ["movq -" ++ show listOff ++ "(%rbp), %rdi", "movq %rax, %rsi", "call map_get"]
+       else exprToASM idxExpr locals labels vt fns ++
+            ["movq -" ++ show listOff ++ "(%rbp), %rdi", "movq %rax, %rsi", "call list_get_at",
+             "cmpq $-1, %rax", "jne 1f",
+             "leaq LC" ++ show (errLabel "List error: index out of bounds\n" labels) ++ "(%rip), %rdi",
+             "xorq %rsi, %rsi", "call darkness_print", "1:"]
+
+exprToASM (Call (AstSymbol "list-len") [AstSymbol name]) locals _ _ _ =
+    ["movq -" ++ show (Map.findWithDefault 0 name locals) ++ "(%rbp), %rdi", "call list_len"]
+
+exprToASM (Call (AstSymbol "str-len") [e]) locals labels vt fns =
+    case e of
+        AstSymbol name | Map.lookup name vt == Just (TCustom "list") ->
+            ["movq -" ++ show (Map.findWithDefault 0 name locals) ++ "(%rbp), %rdi", "call list_len"]
+        _ -> exprToASM e locals labels vt fns ++ ["movq %rax, %rdi", "call str_len"]
+
+exprToASM (Call (AstSymbol "list-empty") [AstSymbol name]) locals _ _ _ =
+    ["movq -" ++ show (Map.findWithDefault 0 name locals) ++ "(%rbp), %rdi", "call list_is_empty"]
+
+exprToASM (Call (AstSymbol "contains") [AstSymbol name, valExpr]) locals labels vt fns =
+    let off = Map.findWithDefault 0 name locals
+        valAsm = exprToASM valExpr locals labels vt fns
+    in case Map.lookup name vt of
+        Just (TCustom "map") ->
+            valAsm ++ ["movq -" ++ show off ++ "(%rbp), %rdi", "movq %rax, %rsi", "call map_contains"]
+        Just (TCustom "list") ->
+            valAsm ++ ["movq %rax, %rdx",
+                       "movq $" ++ show (inferValTag vt valExpr) ++ ", %rsi",
+                       "movq -" ++ show off ++ "(%rbp), %rdi",
+                       "call list_contains"]
+        Just TString ->
+            valAsm ++ ["movq %rax, %rsi",
+                       "movq -" ++ show off ++ "(%rbp), %rdi",
+                       "call str_contains"]
+        _ ->
+            valAsm ++ ["movq %rax, %rdx",
+                       "movq $" ++ show (inferValTag vt valExpr) ++ ", %rsi",
+                       "movq -" ++ show off ++ "(%rbp), %rdi",
+                       "call list_contains"]
+
+exprToASM (Call (AstSymbol "list-contains") [AstSymbol listName, valExpr]) locals labels vt fns =
+    let off = Map.findWithDefault 0 listName locals
+        isMap = Map.lookup listName vt == Just (TCustom "map")
+    in if isMap
+       then exprToASM valExpr locals labels vt fns ++
+            ["movq -" ++ show off ++ "(%rbp), %rdi", "movq %rax, %rsi", "call map_contains"]
+       else exprToASM valExpr locals labels vt fns ++
+            ["movq %rax, %rdx",
+             "movq $" ++ show (inferValTag vt valExpr) ++ ", %rsi",
+             "movq -" ++ show off ++ "(%rbp), %rdi",
+             "call list_contains"]
+
+exprToASM (Call (AstSymbol "map-contains") [AstSymbol mapName, keyExpr]) locals labels vt fns =
+    exprToASM keyExpr locals labels vt fns ++
+    ["movq -" ++ show (Map.findWithDefault 0 mapName locals) ++ "(%rbp), %rdi",
+     "movq %rax, %rsi", "call map_contains"]
+
+exprToASM (Call (AstSymbol "map-at") [AstSymbol name, keyExpr]) locals labels vt fns =
+    exprToASM keyExpr locals labels vt fns ++
+    ["movq -" ++ show (Map.findWithDefault 0 name locals) ++ "(%rbp), %rdi",
+     "movq %rax, %rsi", "call map_get"]
+
+exprToASM (Call (AstSymbol "str-contains") [AstSymbol s, needleExpr]) locals labels vt fns =
+    exprToASM needleExpr locals labels vt fns ++
+    ["movq %rax, %rsi",
+     "movq -" ++ show (Map.findWithDefault 0 s locals) ++ "(%rbp), %rdi",
+     "call str_contains"]
+
+exprToASM (Call (AstSymbol "str-split") [strExpr, sepExpr]) locals labels vt fns =
+    exprToASM strExpr locals labels vt fns ++ ["pushq %rax"] ++
+    exprToASM sepExpr locals labels vt fns ++
+    ["movq %rax, %rsi", "popq %rdi", "call str_split"]
 
 exprToASM (Call (AstSymbol op) [lhs, rhs]) locals labels vt fns
     | op `elem` ["<", "==", ">", "<=", ">=", "!="] = 
@@ -393,6 +494,155 @@ stmtToASM (Assign name val) uid labels locals _ _ _ vt li fns =
                     exitFailure
     in (uid, exprToASM val locals labels vt fns ++ ["movq %rax, -" ++ show off ++ "(%rbp)"], li)
 
+stmtToASM (Call (AstSymbol "list-create") (AstSymbol name : items)) uid labels locals ret ls le vt li fns =
+    let off = Map.findWithDefault 0 name locals
+        push = emitListPush off
+        init = ["call list_new", "movq %rax, -" ++ show off ++ "(%rbp)"]
+        pushes = concatMap (\it -> push it locals labels vt fns (exprToASM)) items
+    in (uid, init ++ pushes, li)
+
+stmtToASM (Call (AstSymbol "map-create") (AstSymbol name : pairs)) uid labels locals _ _ _ vt li fns =
+    let off = Map.findWithDefault 0 name locals
+        init = ["call map_new", "movq %rax, -" ++ show off ++ "(%rbp)"]
+        puts = concatMap (putPair off name locals labels vt fns) pairs
+    in (uid, init ++ puts, li)
+  where
+    putPair off _ locals labels vt fns (AstList [k, v]) =
+        exprToASM k locals labels vt fns ++ ["movq %rax, %r13"] ++
+        exprToASM v locals labels vt fns ++
+        ["movq %rax, %rcx",
+         "movq $" ++ show (inferValTag vt v) ++ ", %rdx",
+         "movq -" ++ show off ++ "(%rbp), %rdi",
+         "movq %r13, %rsi", "call map_put",
+         "movq %rax, -" ++ show off ++ "(%rbp)"]
+    putPair _ _ _ _ _ _ _ = []
+
+stmtToASM (Call (AstSymbol "map-put") [AstSymbol name, k, v]) uid labels locals _ _ _ vt li fns =
+    let off = Map.findWithDefault 0 name locals
+        instrs = exprToASM k locals labels vt fns ++ ["movq %rax, %r13"] ++
+                 exprToASM v locals labels vt fns ++
+                 ["movq %rax, %rcx",
+                  "movq $" ++ show (inferValTag vt v) ++ ", %rdx",
+                  "movq -" ++ show off ++ "(%rbp), %rdi",
+                  "movq %r13, %rsi", "call map_put",
+                  "movq %rax, -" ++ show off ++ "(%rbp)"]
+    in (uid, instrs, li)
+
+stmtToASM (Call (AstSymbol "map-remove") [AstSymbol name, k]) uid labels locals _ _ _ vt li fns =
+    let off = Map.findWithDefault 0 name locals
+        failLbl = ".Lmr_fail_" ++ show uid
+        instrs = exprToASM k locals labels vt fns ++
+                 ["movq -" ++ show off ++ "(%rbp), %rdi", "movq %rax, %rsi", "call map_remove",
+                  "testq %rax, %rax", "jnz " ++ failLbl,
+                  "leaq LC" ++ show (errLabel "Map error: key not found\n" labels) ++ "(%rip), %rdi",
+                  "xorq %rsi, %rsi", "call darkness_print", failLbl ++ ":"]
+    in (uid, instrs, li)
+
+stmtToASM (Call (AstSymbol "list-add") [AstSymbol listVar, mode, AstList items]) uid labels locals _ _ _ vt li fns =
+    let off = Map.findWithDefault 0 listVar locals
+        push = emitListPush off
+        failMsg = "List error: element not found\n"
+        failIdx = errLabel failMsg labels
+        doAppend it = push it locals labels vt fns (exprToASM) ++
+            ["movq %rax, -" ++ show off ++ "(%rbp)"]
+        doPrepend it = exprToASM it locals labels vt fns ++ emitTaggedPair vt it ++
+            ["movq -" ++ show off ++ "(%rbp), %rdi", "call list_prepend",
+             "movq %rax, -" ++ show off ++ "(%rbp)"]
+        insertAfter nth target it lbl =
+            exprToASM target locals labels vt fns ++
+            emitTaggedPair vt target ++
+            ["pushq %rsi", "pushq %rdx"] ++
+            exprToASM it locals labels vt fns ++
+            emitTaggedPair vt it ++
+            ["movq %rsi, %r8", "movq %rdx, %r9",
+             "popq %rcx", "popq %rdx",
+             "movq -" ++ show off ++ "(%rbp), %rdi",
+             "movq $" ++ show nth ++ ", %rsi",
+             "call list_insert_after_nth",
+             "testq %rax, %rax", "jnz " ++ lbl,
+             "leaq LC" ++ show failIdx ++ "(%rip), %rdi",
+             "xorq %rsi, %rsi", "call darkness_print",
+             lbl ++ ":"]
+        instrs = case mode of
+            AstSymbol "append"  -> concatMap doAppend items
+            AstSymbol "prepend" -> concatMap doPrepend items
+            Call (AstSymbol "insert-after") [AstInt nth, tgt] ->
+                concatMap (\(i, it) -> insertAfter nth tgt it (".Lok_" ++ show uid ++ "_" ++ show i)) (zip [0..] items)
+            _ -> concatMap doAppend items
+    in (uid + max 1 (length items), instrs, li)
+
+stmtToASM (Call (AstSymbol "list-remove") [AstSymbol listVar, modeAst]) uid labels locals _ _ _ vt li fns =
+    let off = Map.findWithDefault 0 listVar locals
+        failIdx = errLabel "List error: element not found\n" labels
+        okLbl = ".Lrmok_" ++ show uid
+        darkness = ["testq %rax, %rax", "jnz " ++ okLbl,
+                    "leaq LC" ++ show failIdx ++ "(%rip), %rdi", "xorq %rsi, %rsi", "call darkness_print", okLbl ++ ":"]
+        (mode, args) = case modeAst of
+            Call (AstSymbol m) as -> (m, as)
+            AstSymbol m -> (m, [])
+            _ -> ("", [])
+        instrs = case (mode, args) of
+            ("at-index", [AstInt idx]) ->
+                ["movq -" ++ show off ++ "(%rbp), %rdi", "movq $" ++ show idx ++ ", %rsi", "call list_remove_at_idx"] ++ darkness
+            ("first-value", [AstInt nth, tgt]) ->
+                exprToASM tgt locals labels vt fns ++ emitTaggedPair vt tgt ++
+                ["movq %rdx, %rcx", "movq %rsi, %rdx",
+                 "movq -" ++ show off ++ "(%rbp), %rdi", "movq $" ++ show nth ++ ", %rsi",
+                 "call list_remove_nth_val"] ++ darkness
+            ("nth-value", [AstInt nth, tgt]) ->
+                exprToASM tgt locals labels vt fns ++ emitTaggedPair vt tgt ++
+                ["movq %rdx, %rcx", "movq %rsi, %rdx",
+                 "movq -" ++ show off ++ "(%rbp), %rdi", "movq $" ++ show nth ++ ", %rsi",
+                 "call list_remove_nth_val"] ++ darkness
+            ("after-value", [AstInt nth, tgt]) ->
+                exprToASM tgt locals labels vt fns ++ emitTaggedPair vt tgt ++
+                ["movq %rdx, %rcx", "movq %rsi, %rdx",
+                 "movq -" ++ show off ++ "(%rbp), %rdi", "movq $" ++ show nth ++ ", %rsi",
+                 "call list_remove_after_val"] ++ darkness
+            _ -> []
+    in (uid + 1, instrs, li)
+
+stmtToASM (Call (AstSymbol "for-each") [AstSymbol itemVar, AstSymbol listName, body]) uid labels locals ret ls le vt li fns =
+    let listOff = Map.findWithDefault 0 listName locals
+        itemOff = Map.findWithDefault 0 itemVar locals
+        lStart = ".Lfe_s_" ++ show uid
+        lEnd = ".Lfe_e_" ++ show uid
+        idxOff = listOff + 100000  -- bad - use uid based temp on stack via r12
+        (_, bStmts, li') = emitStmts body (uid + 1) labels locals ret (Just lStart) (Just lEnd) 
+                           (Map.insert itemVar (TCustom "value") vt) li fns
+        instrs =
+          [ lStart ++ ":"
+          , "movq -" ++ show listOff ++ "(%rbp), %rdi", "call list_len"
+          , "movq %rax, %r12", "xorq %rbx, %rbx"
+          , ".Lfe_i_" ++ show uid ++ ":"
+          , "cmpq %rbx, %r12", "jge " ++ lEnd
+          , "movq -" ++ show listOff ++ "(%rbp), %rdi", "movq %rbx, %rsi", "call list_get_at"
+          , "movq %rax, -" ++ show itemOff ++ "(%rbp)"
+          ] ++ bStmts ++
+          [ "incq %rbx", "jmp .Lfe_i_" ++ show uid, lEnd ++ ":" ]
+    in (uid + 2, instrs, li')
+
+stmtToASM (Call (AstSymbol "darkness") [arg]) uid labels locals _ _ _ vt li fns =
+    let pts = case arg of
+                Call (AstSymbol "string-interp") p -> p
+                _ -> [arg]
+        flat = flattenStringInterp pts
+        fmt = buildFormatString vt flat ++ "\n"
+        fmtIdx = maybe 0 id (lookup fmt labels)
+        args = [p | p <- flat, not (isStringNode p)]
+        evalArg = if null args then ["xorq %rax, %rax"] else exprToASM (head args) locals labels vt fns
+        isList = case args of
+            (AstSymbol s : _) -> Map.lookup s vt == Just (TCustom "list")
+            _ -> False
+        prepList = if isList
+                   then ["movq %rax, %rdi", "call list_to_string", "movq %rax, %rsi"]
+                   else ["movq %rax, %rsi"]
+        callDark =
+            [ "leaq LC" ++ show fmtIdx ++ "(%rip), %rdi" ]
+            ++ prepList
+            ++ ["call darkness_print"]
+    in (uid, evalArg ++ callDark, li)
+
 -- Pattern peric (printf)
 stmtToASM (Call (AstSymbol "peric") [arg]) uid labels locals _ _ _ vt li fns =
     let pts = case arg of 
@@ -407,12 +657,18 @@ stmtToASM (Call (AstSymbol "peric") [arg]) uid labels locals _ _ _ vt li fns =
             (AstSymbol s : _) -> Map.lookup s vt == Just TFloat
             (AstFloat _ : _)  -> True
             _                 -> False
-        callPrintf = 
-            [ "subq $8, %rsp" -- Alignement pile
-            , "leaq LC" ++ show fmtIdx ++ "(%rip), %rdi" 
-            ]
-            ++ (if isFloat then ["movq %rax, %xmm0", "movb $1, %al"] else ["movq %rax, %rsi", "movb $0, %al"])
-            ++ ["call printf", "addq $8, %rsp"]
+        isList = case args of
+            (AstSymbol s : _) -> Map.lookup s vt == Just (TCustom "list")
+            _ -> False
+        prepOut = if isList
+                  then [ "movq %rax, %rdi", "call list_to_string", "movq %rax, %rsi"
+                       , "leaq LC" ++ show fmtIdx ++ "(%rip), %rdi", "movb $0, %al" ]
+                  else if isFloat then ["movq %rax, %xmm0", "movb $1, %al"] else ["movq %rax, %rsi", "movb $0, %al"]
+        callPrintf =
+            [ "subq $8, %rsp" ]
+            ++ (if isList then [] else [ "leaq LC" ++ show fmtIdx ++ "(%rip), %rdi" ])
+            ++ prepOut
+            ++ [ "call printf", "addq $8, %rsp" ]
     in (uid, evalArg ++ callPrintf, li)
 
 stmtToASM (Call (AstSymbol "assign") [Call (AstSymbol "array-access") [baseExpr, i], v]) uid labels locals _ _ _ vt li fns
@@ -530,9 +786,12 @@ buildFormatString vt (Call (AstSymbol "field-load") _ : xs) = "%ld" ++ buildForm
 buildFormatString vt (AstSymbol s : xs) = 
     let isStr = Map.lookup s vt == Just TString || " + " `isInfixOf` s
         isFloat = Map.lookup s vt == Just TFloat
-        fmt = if isStr then "%s" else "%ld" -- Default to %ld
+        isList = Map.lookup s vt == Just (TCustom "list")
+        fmt = if isStr || isList then "%s" else if isFloat then "%f" else "%ld"
     in fmt ++ buildFormatString vt xs
-buildFormatString vt (Call (AstSymbol "+") _ : xs) = "%s" ++ buildFormatString vt xs
+buildFormatString vt (Call (AstSymbol "+") [l, r] : xs)
+    | isStringAst vt l || isStringAst vt r = "%s" ++ buildFormatString vt xs
+    | otherwise = "%ld" ++ buildFormatString vt xs
 buildFormatString vt (_ : xs) = "%ld" ++ buildFormatString vt xs
 buildFormatString _ [] = ""
 
@@ -544,6 +803,11 @@ collectStrings (ClassDef _ fields mCtor methods) vt =
 collectStrings ast vt = case ast of
     AstString s -> [s]
     Call (AstSymbol "peric") [arg] ->
+        let pts = case arg of { Call (AstSymbol "string-interp") p -> p; _ -> [arg] }
+            flat = flattenStringInterp pts
+            fmt = buildFormatString vt flat ++ "\n"
+        in [fmt] ++ concatMap (`collectStrings` vt) flat
+    Call (AstSymbol "darkness") [arg] ->
         let pts = case arg of { Call (AstSymbol "string-interp") p -> p; _ -> [arg] }
             flat = flattenStringInterp pts
             fmt = buildFormatString vt flat ++ "\n"
@@ -688,11 +952,32 @@ builtInFunctions = unlines
     , "\taddq -24(%rbp), %rax; incq %rax; movq %rax, %rdi; call malloc; movq %rax, -32(%rbp)"
     , "\tmovq %rax, %rdi; movq -8(%rbp), %rsi; call strcpy"
     , "\tmovq -32(%rbp), %rdi; movq -16(%rbp), %rsi; call strcat; movq -32(%rbp), %rax; leave; ret"
+    , "int_to_str:"
+    , "\tpushq %rbp; movq %rsp, %rbp; subq $48, %rsp; movq %rdi, -8(%rbp)"
+    , "\tleaq -40(%rbp), %rdi; leaq .LC_itoa(%rip), %rsi; movq -8(%rbp), %rdx; xorq %rax, %rax; call sprintf"
+    , "\tleaq -40(%rbp), %rdi; call strlen; incq %rax; movq %rax, %rdi; call malloc; movq %rax, -48(%rbp)"
+    , "\tmovq %rax, %rdi; leaq -40(%rbp), %rsi; call strcpy; movq -48(%rbp), %rax; leave; ret"
     , ".section .rodata"
     , ".LC_r_mode: .string \"rb\""
     , ".LC_w_mode: .string \"w\""
     , ".LC_s_fmt: .string \"%s\""
+    , ".LC_itoa: .string \"%ld\""
     ]
+
+isStringAst :: Map.Map String Type -> Ast -> Bool
+isStringAst vt a = case a of
+    AstString _ -> True
+    AstSymbol s -> Map.lookup s vt == Just TString || " + " `isInfixOf` s
+    Call (AstSymbol "+") [l, r] -> isStringAst vt l || isStringAst vt r
+    Call (AstSymbol f) _ -> f `elem` ["renaud", "romaric", "str_concat"]
+    _ -> False
+
+errLabel :: String -> [(String, Int)] -> Int
+errLabel s labels = maybe 0 id (lookup s labels)
+
+listTypeAst :: Map.Map String Type -> Ast -> Bool
+listTypeAst vt (AstSymbol s) = Map.lookup s vt == Just (TCustom "list")
+listTypeAst _ _ = False
 
 -- =============================================================================
 -- Bytecode Compilation (VM)

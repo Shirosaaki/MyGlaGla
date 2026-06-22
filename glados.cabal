@@ -40,7 +40,9 @@ library
       UI
       VM
   other-modules:
+      ListCompiler
       Paths_glados
+      WaifuRuntime
   autogen-modules:
       Paths_glados
   hs-source-dirs:

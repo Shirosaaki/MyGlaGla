@@ -171,6 +171,101 @@ sexprToAST (SList [SSymbol "call", SSymbol "for",
 sexprToAST (SList [SSymbol "assign", SSymbol name, valueS]) =
     fmap (Assign name) (sexprToAST valueS)
 
+-- -----------------------------------------------------------------------
+-- WaifuLang lists, maps, strings
+-- -----------------------------------------------------------------------
+sexprToAST (SList (SSymbol "list-create" : SSymbol name : items)) =
+    case mapM sexprToAST items of
+        Right is -> Right (Call (AstSymbol "list-create") (AstSymbol name : is))
+        Left e   -> Left e
+
+sexprToAST (SList [SSymbol "list-add", SSymbol listVar, mode, SList items]) =
+    case mapM sexprToAST items of
+        Right is -> Right (Call (AstSymbol "list-add") [AstSymbol listVar, modeAst, AstList is])
+        Left e   -> Left e
+  where modeAst = case mode of
+          SSymbol s -> AstSymbol s
+          SList [SSymbol "insert-after", nth, target] ->
+              Call (AstSymbol "insert-after") [fromSInt nth, targetAst target]
+          other -> AstSymbol (show other)
+        targetAst (SSymbol s) = AstSymbol s
+        targetAst t = case sexprToAST t of { Right a -> a; Left _ -> AstVoid }
+        fromSInt (SInt n) = AstInt n
+        fromSInt _ = AstInt 1
+
+sexprToAST (SList [SSymbol "list-remove", SSymbol listVar, mode]) =
+    Right (Call (AstSymbol "list-remove") [AstSymbol listVar, modeAst mode])
+  where
+    modeAst (SList [SSymbol m, a, b]) =
+        Call (AstSymbol m) [fromS a, fromS b]
+    modeAst (SList [SSymbol m, a]) =
+        Call (AstSymbol m) [fromS a]
+    modeAst other = AstSymbol (show other)
+    fromS (SInt n) = AstInt n
+    fromS (SSymbol s) = AstSymbol s
+    fromS t = case sexprToAST t of { Right a -> a; Left _ -> AstVoid }
+
+sexprToAST (SList (SSymbol "map-create" : SSymbol name : pairs)) =
+    case mapM parsePair pairs of
+        Right ps -> Right (Call (AstSymbol "map-create") (AstSymbol name : ps))
+        Left e   -> Left e
+  where
+    parsePair (SList [k, v]) =
+        case (sexprToAST k, sexprToAST v) of
+            (Right ka, Right va) -> Right (AstList [ka, va])
+            (Left e, _)          -> Left e
+            (_, Left e)          -> Left e
+    parsePair _ = Left "map-create: bad pair"
+
+sexprToAST (SList [SSymbol "map-put", SSymbol name, k, v]) =
+    case (sexprToAST k, sexprToAST v) of
+        (Right ka, Right va) -> Right (Call (AstSymbol "map-put") [AstSymbol name, ka, va])
+        (Left e, _)          -> Left e
+        (_, Left e)          -> Left e
+
+sexprToAST (SList [SSymbol "map-remove", SSymbol name, k]) =
+    fmap (\ka -> Call (AstSymbol "map-remove") [AstSymbol name, ka]) (sexprToAST k)
+
+sexprToAST (SList [SSymbol "list-at", SSymbol listVar, idx]) =
+    fmap (\i -> Call (AstSymbol "list-at") [AstSymbol listVar, i]) (sexprToAST idx)
+
+sexprToAST (SList [SSymbol "list-len", e]) =
+    fmap (\a -> Call (AstSymbol "list-len") [a]) (sexprToAST e)
+
+sexprToAST (SList [SSymbol "list-empty", SSymbol v]) =
+    Right (Call (AstSymbol "list-empty") [AstSymbol v])
+
+sexprToAST (SList [SSymbol "contains", SSymbol v, e]) =
+    fmap (\a -> Call (AstSymbol "contains") [AstSymbol v, a]) (sexprToAST e)
+sexprToAST (SList [SSymbol "list-contains", SSymbol v, e]) =
+    fmap (\a -> Call (AstSymbol "list-contains") [AstSymbol v, a]) (sexprToAST e)
+
+sexprToAST (SList [SSymbol "map-at", SSymbol m, k]) =
+    fmap (\ka -> Call (AstSymbol "map-at") [AstSymbol m, ka]) (sexprToAST k)
+
+sexprToAST (SList [SSymbol "map-contains", SSymbol m, k]) =
+    fmap (\ka -> Call (AstSymbol "map-contains") [AstSymbol m, ka]) (sexprToAST k)
+
+sexprToAST (SList [SSymbol "str-len", e]) =
+    fmap (\a -> Call (AstSymbol "str-len") [a]) (sexprToAST e)
+
+sexprToAST (SList [SSymbol "str-split", s, sep]) =
+    case (sexprToAST s, sexprToAST sep) of
+        (Right sa, Right sb) -> Right (Call (AstSymbol "str-split") [sa, sb])
+        (Left e, _)          -> Left e
+        (_, Left e)          -> Left e
+
+sexprToAST (SList [SSymbol "str-contains", SSymbol s, n]) =
+    fmap (\na -> Call (AstSymbol "str-contains") [AstSymbol s, na]) (sexprToAST n)
+
+sexprToAST (SList [SSymbol "for-each", SSymbol itemVar, SSymbol listVar, bodyS]) =
+    case sexprToAST bodyS of
+        Right b -> Right (Call (AstSymbol "for-each") [AstSymbol itemVar, AstSymbol listVar, b])
+        Left e  -> Left e
+
+sexprToAST (SList [SSymbol "call", SSymbol "darkness", SList [expr]]) =
+    fmap (\e -> Call (AstSymbol "darkness") [e]) (sexprToAST expr)
+
 -- assign avec member-access (TheShow)
 sexprToAST (SList [SSymbol "assign",
                    SList (SSymbol "member-access" : SSymbol obj : SSymbol field : []),
