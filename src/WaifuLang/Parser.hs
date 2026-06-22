@@ -484,7 +484,7 @@ parseWhile = do
 
 parseFullCondition :: Parser SExpr
 parseFullCondition = choice
-  [ try $ reserved "something" >> reserved "different" >> return (SInt 0)
+  [ try $ reserved "something" >> reserved "different" >> return (SInt 1)
   , try parseListMapCondition
   , try parseStrContainsCondition
   , do

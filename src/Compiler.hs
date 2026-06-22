@@ -67,6 +67,8 @@ collectVarTypes (Define n (Just t) val) structs =
     Map.insert n t (collectVarTypes val structs)
 collectVarTypes (Define _ Nothing val) structs = collectVarTypes val structs
 collectVarTypes (AstLambda _ body) structs = collectVarTypes body structs
+collectVarTypes (Assign n (Call (AstSymbol "str-split") _)) _ =
+    Map.singleton n (TCustom "list")
 collectVarTypes (Assign n val) vt | isStringAst vt val = Map.singleton n TString
 collectVarTypes (Assign n (Call (AstSymbol f) _)) _ 
     | f `elem` ["renaud", "romaric", "str_concat"] = Map.singleton n TString
@@ -815,7 +817,7 @@ collectStrings ast vt = case ast of
     Block xs -> concatMap (`collectStrings` vt) xs
     AstList xs -> concatMap (`collectStrings` vt) xs
     AstLambda _ body -> collectStrings body vt
-    IfElse _ th el -> collectStrings th vt ++ collectStrings el vt
+    IfElse c th el -> collectStrings c vt ++ collectStrings th vt ++ collectStrings el vt
     Call (AstSymbol "while") [_, body] -> collectStrings body vt
     While _ body -> collectStrings body vt
     For _ _ body -> collectStrings body vt
