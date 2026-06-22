@@ -13,7 +13,7 @@ import System.FilePath (takeExtension)
 import Console (runConsole, runBatch)
 import Parser (parseSExprMultipleEither, setUseLisp, setUseWaifu) -- Ajout de setUseWaifu
 import AST (sexprToAST, Ast(..), evalAST, SExpr)
-import Compiler (compileToObject, compileToLL, compileToBytecodeFile)
+import Compiler (compileToObject, compileToLL, compileToBytecodeFile, compileSourceFile, CompileMode(..))
 import Loader (loadBytecodeFile, disassemble)
 import ELFLoader (loadAndExecuteELF)
 import VM (runVM)
@@ -36,9 +36,18 @@ main = getArgs >>= \rawArgs -> do
     dispatch args
 
 dispatch :: [String] -> IO ()
+-- Multi-file: glados -c out.o out2.o -w main.waifu lib.waifu
+dispatch ("-c" : rest) | length rest >= 2 && even (length rest) =
+    let n = length rest `div` 2
+        (objOuts, srcFiles) = splitAt n rest
+    in if n > 1
+       then compileMultiple (zip objOuts srcFiles)
+       else compileSourceFile (head objOuts) (head srcFiles) MainModule
+            >> putStrLn "Compilation completed successfully."
 -- Cas avec fichier source : glados -c out.o source.waifu
 dispatch ["-S", llOut, inFile] = compileFromFile inFile (compileToLL llOut)
-dispatch ["-c", objOut, inFile] = compileFromFile inFile (compileToObject objOut)
+dispatch ["-c", objOut, inFile] = compileSourceFile objOut inFile MainModule
+                              >> putStrLn "Compilation completed successfully."
 dispatch ["-B", byteOut, inFile] = compileFromFile inFile (compileToBytecodeFile byteOut)
 
 -- Cas avec stdin (existant) : cat source.waifu | glados -c out.o
@@ -51,7 +60,17 @@ dispatch [file]
     | takeExtension file == ".o" = runVMMode file
     | otherwise = runFileMode file
 dispatch [] = runInteractive
-dispatch _ = die "Usage: glados [-l] [-w] [-S out.ll [file] | -c out.o [file] | -B out.byte [file] | -d file.o | file.o | file.scm]"
+dispatch _ = die "Usage: glados [-l] [-w] [-S out.ll [file] | -c out.o [out2.o ...] [file] [file2 ...] | -B out.byte [file] | -d file.o | file.o | file.scm]"
+
+compileMultiple :: [(FilePath, FilePath)] -> IO ()
+compileMultiple [] = return ()
+compileMultiple pairs = go pairs 0 >> putStrLn "Compilation completed successfully."
+  where
+    go [] _ = return ()
+    go ((objOut, srcFile) : rest) i = do
+      let mode = if i == 0 then MainModule else LibraryModule
+      compileSourceFile objOut srcFile mode
+      go rest (i + 1)
 
 runInteractive :: IO ()
 runInteractive = do

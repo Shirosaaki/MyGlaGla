@@ -1,12 +1,15 @@
-module Compiler (compileModuleLLVM, compileToLL, compileToObject, compileToBytecodeFile) where
+module Compiler (compileModuleLLVM, compileToLL, compileToObject, compileToBytecodeFile, compileSourceFile, CompileMode(..)) where
 
-import AST (Ast(..), Type(..))
+import AST (Ast(..), Type(..), sexprToAST)
 import qualified Data.Map.Strict as Map
-import Data.List (isInfixOf)
 import qualified Data.Set as Set
+import Data.List (isInfixOf, nub)
 import System.Process (callCommand)
 import System.IO ()
+import System.FilePath (takeDirectory, (</>), normalise, isAbsolute)
+import System.Directory (doesFileExist)
 import Control.Exception (catch, SomeException(..), displayException)
+import Control.Monad (foldM)
 import System.Exit (exitFailure)
 import qualified Control.Exception as E
 import UI (printError)
@@ -20,10 +23,21 @@ import Foreign.Marshal.Array (allocaArray)
 import Foreign.Storable (poke, peek)
 import WaifuRuntime (waifuRuntimeASM)
 import ListCompiler (inferValTag, emitListPush, emitTaggedPair, listRuntimeBuiltins, listErrorStrings)
+import Parser (parseSExprMultipleEither)
 
 -- =============================================================================
 -- Configuration
 -- =============================================================================
+
+data CompileMode = MainModule | LibraryModule deriving (Eq)
+
+data CompileConfig = CompileConfig
+  { ccMode        :: CompileMode
+  , ccExternFuncs :: [String]
+  }
+
+defaultCompileConfig :: CompileConfig
+defaultCompileConfig = CompileConfig MainModule []
 
 builtIns :: [String]
 builtIns =
@@ -43,11 +57,11 @@ floatToBits d = allocaArray 1 $ \ptr -> do
 -- =============================================================================
 
 compileModuleLLVM :: Ast -> String
-compileModuleLLVM ast = emitASM ast
+compileModuleLLVM ast = emitASM ast defaultCompileConfig
 
 compileToLL :: FilePath -> Ast -> IO ()
 compileToLL outputPath ast = do
-    let asmCode = emitASM ast
+    let asmCode = emitASM ast defaultCompileConfig
     writeFile outputPath asmCode
     putStrLn $ "Assembly code written to: " ++ outputPath
 
@@ -115,6 +129,8 @@ collectFunctionNames :: Ast -> [String]
 collectFunctionNames (Block xs) = concatMap collectFunctionNames xs
 collectFunctionNames (AstList xs) = concatMap collectFunctionNames xs
 collectFunctionNames (Define n _ (AstLambda _ _)) = [n]
+collectFunctionNames (Include _) = []
+collectFunctionNames MainDecl = []
 collectFunctionNames (ClassDef cn _ _ methods) =
     (cn ++ "_new") : map (\(n,_,_) -> cn ++ "_" ++ n) methods
 collectFunctionNames _ = []
@@ -136,8 +152,11 @@ buildLocalMap ast vt =
 -- =============================================================================
 
 compileToObject :: FilePath -> Ast -> IO ()
-compileToObject out ast = catch (do
-    let asm = emitASM ast
+compileToObject out ast = compileToObjectWithConfig out ast defaultCompileConfig
+
+compileToObjectWithConfig :: FilePath -> Ast -> CompileConfig -> IO ()
+compileToObjectWithConfig out ast cfg = catch (do
+    let asm = emitASM ast cfg
         asmFile = "/tmp/glados_emit.s"
     _ <- E.evaluate (length asm)
     writeFile asmFile asm
@@ -149,60 +168,175 @@ compileToObject out ast = catch (do
         putStrLn $ "Compilation Error: " ++ displayException e
         exitFailure
 
-emitASM :: Ast -> String
-emitASM ast =
+resolveIncludePathIO :: FilePath -> FilePath -> IO FilePath
+resolveIncludePathIO sourceFile incl
+  | isAbsolute incl = return (normalise incl)
+  | otherwise = do
+      let fromSource = normalise (takeDirectory sourceFile </> incl)
+          fromCwd = normalise incl
+      srcExists <- doesFileExist fromSource
+      if srcExists then return fromSource else return fromCwd
+
+parseSourceToAsts :: String -> Either String [Ast]
+parseSourceToAsts input =
+  case parseSExprMultipleEither input of
+    Left err -> Left err
+    Right sexprs ->
+      case mapM sexprToAST sexprs of
+        Left perr -> Left perr
+        Right asts -> Right asts
+
+loadExportNames :: Set.Set FilePath -> FilePath -> IO (Either String [String])
+loadExportNames visited path
+  | path `Set.member` visited = return (Right [])
+  | otherwise = do
+      content <- readFile path
+      case parseSourceToAsts content of
+        Left err -> return $ Left ("Include '" ++ path ++ "': " ++ err)
+        Right asts -> do
+          let direct = collectFunctionNames (Block asts)
+              includes = [p | Include p <- asts]
+          rest <- mapM (loadExportNamesFrom visited path) includes
+          case sequence rest of
+            Left err -> return $ Left err
+            Right nested -> return $ Right (nub (direct ++ concat nested))
+  where
+    loadExportNamesFrom vis sourceFile rel = do
+      absPath <- resolveIncludePathIO sourceFile rel
+      loadExportNames (Set.insert absPath vis) absPath
+
+resolveIncludes :: FilePath -> [Ast] -> IO (Either String ([Ast], [String]))
+resolveIncludes sourceFile asts = do
+  let includes = [rel | Include rel <- asts]
+  result <- foldM (accumExport sourceFile) (Right []) includes
+  case result of
+    Left err -> return (Left err)
+    Right exportsAcc ->
+      let stripped = filter (not . isInclude) asts
+      in return (Right (stripped, nub exportsAcc))
+  where
+    isInclude (Include _) = True
+    isInclude _           = False
+    accumExport _ (Left e) _ = return (Left e)
+    accumExport src (Right acc) rel = do
+      absPath <- resolveIncludePathIO src rel
+      loadResult <- loadExportNames Set.empty absPath
+      case loadResult of
+        Left err -> return (Left err)
+        Right names -> return (Right (acc ++ names))
+
+validateModule :: CompileMode -> [Ast] -> Either String ()
+validateModule mode asts =
+  let hasMain = any (== MainDecl) asts
+      funcs = collectFunctionNames (Block asts)
+  in case mode of
+       MainModule
+         | not hasMain -> Left "Main module requires: Toph doesn't have nickname and has nothing."
+         | otherwise   -> Right ()
+       LibraryModule
+         | hasMain     -> Left "Library module must not declare a main (Toph doesn't have nickname and has nothing)."
+         | null funcs  -> Left "Library module must define at least one function (Toph nickname is name and takes ...)."
+         | otherwise   -> Right ()
+
+compileSourceFile :: FilePath -> FilePath -> CompileMode -> IO ()
+compileSourceFile outPath sourcePath mode = do
+  input <- readFile sourcePath
+  case parseSourceToAsts input of
+    Left err -> printError ("Parsing error:\n" ++ err) >> exitFailure
+    Right asts -> do
+      resolveResult <- resolveIncludes sourcePath asts
+      case resolveResult of
+        Left err -> printError err >> exitFailure
+        Right (resolved, externs) ->
+          case validateModule mode resolved of
+            Left err -> printError err >> exitFailure
+            Right () -> do
+              let asts' = case (mode, resolved) of
+                            (MainModule, [def@(Define name _ (AstLambda params _))]) | null params ->
+                                [def, Call (AstSymbol name) []]
+                            _ -> resolved
+                  cfg = CompileConfig
+                        { ccMode = mode
+                        , ccExternFuncs = externs
+                        }
+              compileToObjectWithConfig outPath (Block asts') cfg
+              putStrLn ("Compiled " ++ sourcePath ++ " -> " ++ outPath)
+
+emitASM :: Ast -> CompileConfig -> String
+emitASM ast cfg =
     let ast' = ast
         varTypes = collectVarTypes ast' Map.empty
-        funcNames = collectFunctionNames ast'
-        strs = uniqueList (collectStrings ast' varTypes) ++ listErrorStrings
+        localFuncs = collectFunctionNames ast'
+        funcNames = nub (localFuncs ++ ccExternFuncs cfg)
+        strs = uniqueList (collectStrings ast' varTypes)
+               ++ if ccMode cfg == MainModule then listErrorStrings else []
         labels = zip strs [0..]
-    in concatMap (emitData) labels ++ "\n" ++ emitText ast' labels varTypes funcNames ++ "\n" ++ builtInFunctions ++ "\n" ++ waifuRuntimeASM
+        globlStrings = ccMode cfg == MainModule
+        rodataSec = if null strs
+                    then ""
+                    else ".section .rodata\n"
+                         ++ concatMap (\l -> emitData l globlStrings) labels
+                         ++ "\n"
+    in rodataSec
+       ++ emitText ast' labels varTypes funcNames cfg
+       ++ runtimeSection cfg
 
-emitData :: (String, Int) -> String
-emitData (s, i) = ".globl LC" ++ show i ++ "\nLC" ++ show i ++ ": .string \"" ++ escapeASM s ++ "\"\n"
+runtimeSection :: CompileConfig -> String
+runtimeSection cfg
+  | ccMode cfg == MainModule = "\n" ++ builtInFunctions ++ "\n" ++ waifuRuntimeASM
+  | otherwise                = ""
 
-emitText :: Ast -> [(String, Int)] -> Map.Map String Type -> [String] -> String
-emitText (Block asts) labels globalVt funcNames =
+emitData :: (String, Int) -> Bool -> String
+emitData (s, i) globlStrings =
+  let body = "LC" ++ show i ++ ": .string \"" ++ escapeASM s ++ "\"\n"
+  in if globlStrings then ".globl LC" ++ show i ++ "\n" ++ body else body
+
+emitText :: Ast -> [(String, Int)] -> Map.Map String Type -> [String] -> CompileConfig -> String
+emitText (Block asts) labels globalVt funcNames cfg =
     let (funcs, stmts) = partitionDefines asts
-        funcASM = concatMap (emitFunc labels globalVt funcNames) funcs
-        
-        hasEric = any (\f -> case f of Define "Eric" _ _ -> True; _ -> False) funcs
-        isExecutable (Struct _ _) = False
-        isExecutable (AstList []) = False
-        isExecutable _ = True
-        
-        hasExecStmts = any isExecutable stmts
-        alreadyCallsEric = any (\s -> case s of Call (AstSymbol "Eric") _ -> True; _ -> False) stmts
-        
-        finalStmts = if hasEric && (not hasExecStmts || not alreadyCallsEric)
-                     then stmts ++ [Call (AstSymbol "Eric") []]
-                     else stmts
-                     
-        mainAST = Block finalStmts
-        localVt = collectVarTypes mainAST globalVt
-        localMap = buildLocalMap mainAST localVt
-        
-        maxOffset = if Map.null localMap then 8 else maximum (Map.elems localMap)
-        allocSize = ((maxOffset + 31) `div` 16) * 16
-        prologue = [".text", ".globl main", "main:", "\tpushq %rbp", "\tmovq %rsp, %rbp", "\tsubq $" ++ show allocSize ++ ", %rsp"]
-        
-        clearMem = concatMap (\(n, off) -> 
-            let isArray = Map.lookup n localVt == Just (TCustom "int[]")
-                sz = if n == "memo" then (1000000 :: Integer)
-                     else if isArray then 4096 
-                     else 0
-            in if sz > 0
-               then ["\tmovq $" ++ show (sz `div` 8) ++ ", %rcx", "\txorq %rax, %rax", "\tleaq -" ++ show off ++ "(%rbp), %rdi", "\trep stosq"]
-               else []
-            ) (Map.toList localMap)
+        funcASM = concatMap (emitFunc labels globalVt funcNames cfg) funcs
+    in case ccMode cfg of
+       LibraryModule -> ".text\n" ++ funcASM
+       MainModule ->
+        let hasEric = any (\f -> case f of Define "Eric" _ _ -> True; _ -> False) funcs
+            isExecutable (Struct _ _) = False
+            isExecutable (AstList []) = False
+            isExecutable _ = True
             
-        (_, body, _) = emitStmts mainAST 0 labels localMap ".Lreturn" Nothing Nothing localVt Map.empty funcNames
-        epilogue = [".Lreturn:", "\taddq $" ++ show allocSize ++ ", %rsp", "\tpopq %rbp", "\tret"]
-        mainASM = unlines $ prologue ++ clearMem ++ map ("\t" ++) body ++ epilogue
-    in funcASM ++ "\n" ++ mainASM
-emitText ast labels vt fns = emitText (Block [ast]) labels vt fns
+            hasExecStmts = any isExecutable stmts
+            alreadyCallsEric = any (\s -> case s of Call (AstSymbol "Eric") _ -> True; _ -> False) stmts
+            
+            finalStmts = if hasEric && (not hasExecStmts || not alreadyCallsEric)
+                         then stmts ++ [Call (AstSymbol "Eric") []]
+                         else stmts
+                         
+            mainAST = Block finalStmts
+            localVt = collectVarTypes mainAST globalVt
+            localMap = buildLocalMap mainAST localVt
+            
+            maxOffset = if Map.null localMap then 8 else maximum (Map.elems localMap)
+            allocSize = ((maxOffset + 31) `div` 16) * 16
+            prologue = [".text", ".globl main", "main:", "\tpushq %rbp", "\tmovq %rsp, %rbp", "\tsubq $" ++ show allocSize ++ ", %rsp"]
+            
+            clearMem = concatMap (\(n, off) -> 
+                let isArray = Map.lookup n localVt == Just (TCustom "int[]")
+                    sz = if n == "memo" then (1000000 :: Integer)
+                         else if isArray then 4096 
+                         else 0
+                in if sz > 0
+                   then ["\tmovq $" ++ show (sz `div` 8) ++ ", %rcx", "\txorq %rax, %rax", "\tleaq -" ++ show off ++ "(%rbp), %rdi", "\trep stosq"]
+                   else []
+                ) (Map.toList localMap)
+                
+            (_, body, _) = emitStmts mainAST 0 labels localMap ".Lreturn" Nothing Nothing localVt Map.empty funcNames
+            epilogue = [".Lreturn:", "\taddq $" ++ show allocSize ++ ", %rsp", "\tpopq %rbp", "\tret"]
+            mainASM = unlines $ prologue ++ clearMem ++ map ("\t" ++) body ++ epilogue
+        in funcASM ++ "\n" ++ mainASM
+emitText ast labels vt fns cfg = emitText (Block [ast]) labels vt fns cfg
 
 partitionDefines :: [Ast] -> ([Ast], [Ast])
+partitionDefines (Include _ : xs) = partitionDefines xs
+partitionDefines (MainDecl : xs) = partitionDefines xs
 partitionDefines (x@(ClassDef _ _ _ _) : xs) =
     let (f, s) = partitionDefines xs in (x:f, s)
 partitionDefines [] = ([], [])
@@ -211,10 +345,10 @@ partitionDefines (x@(Define _ _ (AstLambda _ _)) : xs) =
 partitionDefines (x:xs) = 
     let (f, s) = partitionDefines xs in (f, x:s)
 
-emitFunc :: [(String, Int)] -> Map.Map String Type -> [String] -> Ast -> String
-emitFunc labels vt funcNames cd@(ClassDef _ _ _ _) =
+emitFunc :: [(String, Int)] -> Map.Map String Type -> [String] -> CompileConfig -> Ast -> String
+emitFunc labels vt funcNames cfg cd@(ClassDef _ _ _ _) =
     emitClass labels vt funcNames cd
-emitFunc labels globalVt funcNames (Define name _ (AstLambda params body)) =
+emitFunc labels globalVt funcNames cfg (Define name _ (AstLambda params body)) =
     let localVt = collectVarTypes body globalVt
         allNames = uniqueList (params ++ collectNamesForLocals body)
         
@@ -229,7 +363,8 @@ emitFunc labels globalVt funcNames (Define name _ (AstLambda params body)) =
         finalMap = calc allNames 8 Map.empty
         maxOffset = if Map.null finalMap then 8 else maximum (Map.elems finalMap)
         allocSize = ((maxOffset + 31) `div` 16) * 16
-        prologue = [name ++ ":", "\tpushq %rbp", "\tmovq %rsp, %rbp", "\tsubq $" ++ show allocSize ++ ", %rsp"]
+        globl = if ccMode cfg == LibraryModule then [".globl " ++ name] else []
+        prologue = globl ++ [name ++ ":", "\tpushq %rbp", "\tmovq %rsp, %rbp", "\tsubq $" ++ show allocSize ++ ", %rsp"]
         
         clearMem = concatMap (\(n, off) -> 
             let isArray = Map.lookup n localVt == Just (TCustom "int[]")
@@ -252,7 +387,7 @@ emitFunc labels globalVt funcNames (Define name _ (AstLambda params body)) =
         (_, bStmts, _) = emitStmts body 0 labels finalMap retLabel Nothing Nothing localVt Map.empty funcNames
         epilogue = [retLabel ++ ":", "\tleave", "\tret"]
     in unlines (prologue ++ clearMem ++ paramMoves ++ map ("\t" ++) bStmts ++ epilogue)
-emitFunc _ _ _ _ = ""
+emitFunc _ _ _ _ _ = ""
 
 -- =============================================================================
 -- Expression & Statement Logic
@@ -789,7 +924,11 @@ buildFormatString vt (AstSymbol s : xs) =
     let isStr = Map.lookup s vt == Just TString || " + " `isInfixOf` s
         isFloat = Map.lookup s vt == Just TFloat
         isList = Map.lookup s vt == Just (TCustom "list")
-        fmt = if isStr || isList then "%s" else if isFloat then "%f" else "%ld"
+        isKnownInt = Map.lookup s vt == Just TInt
+        fmt = if isStr || isList then "%s"
+              else if isFloat then "%f"
+              else if isKnownInt then "%ld"
+              else "%s"
     in fmt ++ buildFormatString vt xs
 buildFormatString vt (Call (AstSymbol "+") [l, r] : xs)
     | isStringAst vt l || isStringAst vt r = "%s" ++ buildFormatString vt xs
@@ -823,6 +962,7 @@ collectStrings ast vt = case ast of
     For _ _ body -> collectStrings body vt
     Define _ _ v -> collectStrings v vt
     Assign _ v -> collectStrings v vt
+    Return v -> collectStrings v vt
     Call _ args -> concatMap (`collectStrings` vt) args
     _ -> []
 

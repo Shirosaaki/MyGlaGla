@@ -1,0 +1,5 @@
+# main module — includes library and calls greet
+
+Yuki attracts "other/lib".
+Toph doesn't have nickname and has nothing.
+Albedo leaves with greet "hello from lib".

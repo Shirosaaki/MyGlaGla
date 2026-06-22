@@ -37,7 +37,7 @@ keywords =
   , "sixth", "seventh", "eighth", "ninth", "tenth", "at", "position", "on", "in"
   , "contains", "empty", "length", "split", "puts", "the", "Darkness"
   , "needs", "look", "mark", "listen", "inside", "throughout", "pass", "break", "into", "for"
-  , "Fern", "Fubuki", "Mai", "Noelle", "Yoruichi"
+  , "Fern", "Fubuki", "Mai", "Noelle", "Yoruichi", "Yuki", "attracts"
   ]
 
 waifuVerb :: String -> Parser ()
@@ -160,6 +160,8 @@ parseStatement = sc >> choice
   , try parseForEach
   , try parseFor
   , try parseWhile
+  , try parseInclude
+  , try parseMainDecl
   , try parseBreak
   , try parseContinue
   , try parseMaiRead
@@ -264,11 +266,21 @@ parseFunctionDef = do
   _ <- identifier
   reserved "nickname" >> reserved "is"
   fName <- identifier
-  reserved "and" >> reserved "takes"
+  reserved "and" >> (reserved "takes" <|> reserved "has")
   choice
     [ try (parseConstBinding fName)
     , parseLambdaBinding fName
     ]
+
+parseMainDecl :: Parser SExpr
+parseMainDecl = do
+  _ <- identifier
+  reserved "doesn't" >> reserved "have" >> reserved "nickname"
+  reserved "and"
+  (try (reserved "has" >> reserved "nothing")
+   <|> try (reserved "takes" >> reserved "nothing"))
+  dot
+  return $ SSymbol "main-decl"
 
 parseConstBinding :: String -> Parser SExpr
 parseConstBinding fName = do
@@ -286,17 +298,28 @@ parseLambdaBinding :: String -> Parser SExpr
 parseLambdaBinding fName = do
   params <- (identifier `sepBy` reserved "and") <|> (reserved "nothing" >> return [])
   _ <- optional dot
-  body <- parseStatement
+  bodyStmts <- manyTill parseStatement (try parseNextTopLevel <|> eof)
+  let body = case bodyStmts of
+        [one] -> one
+        xs    -> SList (SSymbol "block" : xs)
   let lambda = SList [SSymbol "lambda", SList (map SSymbol params), body]
   return $ SList [SSymbol "define", SSymbol fName, lambda, SSymbol "void"]
+
+parseNextTopLevel :: Parser ()
+parseNextTopLevel = lookAhead $ void $ choice
+  [ try parseFunctionDef
+  , try parseMainDecl
+  , try parseClass
+  , try parseInclude
+  , try parseVariable
+  ]
 
 parseVariable :: Parser SExpr
 parseVariable = do
   _ <- identifier
   reserved "doesn't" >> reserved "have" >> reserved "nickname"
-  _ <- optional . try $ do
-      reserved "and"
-      void (reserved "has" >> identifier) <|> void (reserved "takes" >> reserved "nothing")
+  reserved "and" >> reserved "has"
+  _ <- identifier
   dot
   return $ SList [SSymbol "block"]
 
@@ -448,6 +471,13 @@ parseExit = do
   _ <- optional (try (void (reserved "leaves") >> void (reserved "with")))
   val <- parseExpression <* dot
   return $ SList [SSymbol "return", val]
+
+parseInclude :: Parser SExpr
+parseInclude = do
+  reserved "Yuki"
+  waifuVerb "attract"
+  path <- parseExpression <* dot
+  return $ SList [SSymbol "include", path]
 
 parseBreak :: Parser SExpr
 parseBreak = do

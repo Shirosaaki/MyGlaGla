@@ -51,6 +51,8 @@ data Ast = Define String (Maybe Type) Ast           -- variable/function definit
          | Struct String [(String, Type)]            -- struct definition (name, fields)
          | StructFieldAssign String String Ast      -- struct.field = value
          | Block [Ast]                               -- sequence of statements
+         | Include FilePath                          -- Yuki attracts "file"
+         | MainDecl                                  -- Toph doesn't have nickname and has nothing.
          | TypedVar String Type Ast                  -- variable with explicit type and init value
          | ClassDef String                           -- nom de la classe
                     [(String, Ast, Type)]            -- champs : (nom, valeur_défaut, type)
@@ -106,6 +108,7 @@ makeCallArgs fnAst args = fmap (Call fnAst) (mapM sexprToAST args)
 sexprToAST :: SExpr -> Either String Ast
 sexprToAST (SSymbol "break")    = Right Break
 sexprToAST (SSymbol "continue") = Right Continue
+sexprToAST (SSymbol "main-decl") = Right MainDecl
 sexprToAST (SSymbol s)  = Right (AstSymbol s)
 sexprToAST (SInt n)     = Right (AstInt n)
 sexprToAST (SFloat f)   = Right (AstFloat f)
@@ -170,6 +173,11 @@ sexprToAST (SList [SSymbol "call", SSymbol "for",
 -- -----------------------------------------------------------------------
 -- assign : WaifuLang émet (assign varName value)
 -- -----------------------------------------------------------------------
+sexprToAST (SList [SSymbol "include", pathS]) =
+    case pathS of
+        SString p -> Right (Include p)
+        SSymbol p -> Right (Include p)
+        _         -> Left "include: path must be a string"
 sexprToAST (SList [SSymbol "assign", SSymbol name, valueS]) =
     fmap (Assign name) (sexprToAST valueS)
 
@@ -505,6 +513,8 @@ evalAST env (IfElse cond thenExpr elseExpr) =
         Right (_, _)                -> Left "if: condition must be a boolean"
         Left err                    -> Left err
 evalAST env (Block stmts) = evalBlock env stmts
+evalAST env (Include _)   = Right (AstVoid, env)
+evalAST env MainDecl      = Right (AstVoid, env)
 evalAST env (Call fnAst args) = evalCall env fnAst args
 evalAST env (ClassDef _ _ _ _) = Right (AstVoid, env)  -- géré par le compilateur
 evalAST _ other = Left ("Unsupported AST node: " ++ show other)
