@@ -104,6 +104,8 @@ makeCallArgs fnAst args = fmap (Call fnAst) (mapM sexprToAST args)
 -- ============================================================================
 
 sexprToAST :: SExpr -> Either String Ast
+sexprToAST (SSymbol "break")    = Right Break
+sexprToAST (SSymbol "continue") = Right Continue
 sexprToAST (SSymbol s)  = Right (AstSymbol s)
 sexprToAST (SInt n)     = Right (AstInt n)
 sexprToAST (SFloat f)   = Right (AstFloat f)

@@ -1,0 +1,20 @@
+# break / continue / read / write / input
+
+Mikasa nickname is val and takes 0.
+Mikasa nickname is buf and takes "".
+Mikasa nickname is name and takes "".
+
+# loop: break on 3, continue on 2
+C18 will operate until C18 nickname val equal to 0 is lower than 6 and incremented by 1 each time.
+Columbina say val.
+Alya thinks that val is equal to 2 so Fubuki wants to pass throughout.
+Alya thinks that val is equal to 3 so Fern wants a break.
+val takes val + 1.
+C18 finish to operate.
+
+# read file, input, write
+Mai needs look inside "other/base" into buf.
+Columbina say buf length.
+Yoruichi wants to listen "who: " into name.
+Noelle wants to mark name inside "/tmp/waifu_io_out.txt".
+Albedo leaves with 0.

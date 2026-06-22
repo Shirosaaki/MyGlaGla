@@ -36,7 +36,12 @@ keywords =
   , "adds", "removes", "after", "first", "second", "third", "fourth", "fifth"
   , "sixth", "seventh", "eighth", "ninth", "tenth", "at", "position", "on", "in"
   , "contains", "empty", "length", "split", "puts", "the", "Darkness"
+  , "needs", "look", "mark", "listen", "inside", "throughout", "pass", "break", "into", "for"
+  , "Fern", "Fubuki", "Mai", "Noelle", "Yoruichi"
   ]
+
+waifuVerb :: String -> Parser ()
+waifuVerb base = void . try . lexeme $ string base >> optional (char 's') >> sc
 
 identifier :: Parser String
 identifier = (lexeme . try) $ do
@@ -155,6 +160,11 @@ parseStatement = sc >> choice
   , try parseForEach
   , try parseFor
   , try parseWhile
+  , try parseBreak
+  , try parseContinue
+  , try parseMaiRead
+  , try parseNoelleWrite
+  , try parseYoruichiInput
   , try parseFunctionDef
   , try parseVariable
   , try parseNewInstance
@@ -438,6 +448,78 @@ parseExit = do
   _ <- optional (try (void (reserved "leaves") >> void (reserved "with")))
   val <- parseExpression <* dot
   return $ SList [SSymbol "return", val]
+
+parseBreak :: Parser SExpr
+parseBreak = do
+  reserved "Fern"
+  waifuVerb "want"
+  reserved "a"
+  reserved "break"
+  dot
+  return $ SSymbol "break"
+
+parseContinue :: Parser SExpr
+parseContinue = do
+  reserved "Fubuki"
+  waifuVerb "want"
+  reserved "to"
+  reserved "pass"
+  reserved "throughout"
+  dot
+  return $ SSymbol "continue"
+
+intoOrFor :: Parser ()
+intoOrFor = void $ choice [try (reserved "into"), try (reserved "for")]
+
+parseMaiRead :: Parser SExpr
+parseMaiRead = do
+  reserved "Mai"
+  reserved "needs"
+  reserved "look"
+  reserved "inside"
+  file <- parseExpression
+  intoOrFor
+  var <- identifier
+  dot
+  return $ SList [SSymbol "assign", SSymbol var,
+                  SList [SSymbol "call", SSymbol "renaud", SList [file]]]
+
+parseNoelleWrite :: Parser SExpr
+parseNoelleWrite = do
+  reserved "Noelle"
+  waifuVerb "want"
+  reserved "to"
+  reserved "mark"
+  content <- parseExpression
+  reserved "inside"
+  file <- parseExpression
+  dot
+  return $ SList [SSymbol "call", SSymbol "marvin", SList [file, content]]
+
+parseYoruichiInput :: Parser SExpr
+parseYoruichiInput = choice
+  [ try $ do
+      reserved "Yoruichi"
+      waifuVerb "want"
+      optional (try $ reserved "to")
+      reserved "listen"
+      prompt <- parseExpression
+      intoOrFor
+      var <- identifier
+      dot
+      return $ SList [SSymbol "assign", SSymbol var,
+                      SList [SSymbol "call", SSymbol "romaric", SList [prompt]]]
+  , do
+      reserved "Yoruichi"
+      waifuVerb "want"
+      optional (try $ reserved "to")
+      reserved "listen"
+      intoOrFor
+      var <- identifier
+      dot
+      return $ SList [SSymbol "assign", SSymbol var,
+                      SList [SSymbol "call", SSymbol "romaric", SList [SString ""]]]
+  ]
 
 parseIf :: Parser SExpr
 parseIf = do
