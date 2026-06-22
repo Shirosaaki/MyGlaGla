@@ -3,7 +3,7 @@ Makima is a person and about she :
 - When she borns, she view ab so :
 -- x takes ab.
 - When she talks :
--- Columbina say x.
+-- Columbina says x.
 - When she walks, she gets number and another :
 -- x takes x + number + another.
 - When she attack :
@@ -17,7 +17,7 @@ person has nickname me and borns and get 1.
 me talks.
 me walks 50 20.
 me talks.
-Columbina say me attack + " oh ! that hurts !".
+Columbina says me attack + " oh ! that hurts !".
 toto takes me attack + "yoyo".
-Columbina say toto.
+Columbina says toto.
 Albedo leaves with 0.

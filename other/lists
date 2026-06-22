@@ -9,17 +9,17 @@ Yor nickname is flt and takes 3.14.
 
 # Phase 1: create, append, prepend, index, length, foreach
 toto takes val, bee, msg0.
-Columbina say toto length.
+Columbina says toto length.
 
 Mikasa nickname is pe and takes 99.
 toto adds pe at the first.
 toto adds pe.
-Columbina say toto at 0.
-Columbina say toto at the second position.
+Columbina says toto at 0.
+Columbina says toto at the second position.
 
-C18 will operate on each item in toto and incremented by 1 each time.
-Columbina say item.
-C18 finish to operate.
+C18 operates on each item in toto and incremented by 1 each time.
+Columbina says item.
+C18 finishes operating.
 
 # Phase 2: insert after, multi-add, remove
 Mikasa nickname is ee and takes 50.
@@ -27,34 +27,34 @@ toto adds ee after val.
 toto adds pe and pe.
 Mikasa nickname is ef and takes 77.
 toto adds ef after the second pe.
-Columbina say toto.
+Columbina says toto.
 
 toto removes at the first.
-Columbina say toto at 0.
+Columbina says toto at 0.
 
 # Phase 3: contains, empty, string ops
 Mikasa nickname is msg and takes "hello world".
-Columbina say msg length.
-Alya thinks that msg contains "world" so Columbina say "contains ok".
+Columbina says msg length.
+Alya thinks that msg contains "world" so Columbina says "contains ok".
 words takes msg split by " ".
-Columbina say words length.
+Columbina says words length.
 
-Alya thinks that toto is empty so Columbina say "empty fail".
-Erina thinks something different so Columbina say "not empty ok".
+Alya thinks that toto is empty so Columbina says "empty fail".
+Erina thinks something different so Columbina says "not empty ok".
 
 # Phase 4: map + nested list
 nested takes toto, val.
-Columbina say nested length.
-Columbina say nested at 1.
+Columbina says nested length.
+Columbina says nested at 1.
 
 book takes "name":"Mat", "age":25.
-Columbina say book at "name".
+Columbina says book at "name".
 book puts "city":"Paris".
-Alya thinks that book contains "city" so Columbina say "map ok".
+Alya thinks that book contains "city" so Columbina says "map ok".
 
 # Error via Darkness (stderr) - remove missing element
 Mikasa nickname is ghost and takes 404.
 toto removes ghost.
-Darkness say "should not print on stdout".
+Darkness says "should not print on stdout".
 
 Albedo leaves with 0.

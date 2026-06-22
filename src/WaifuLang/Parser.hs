@@ -4,6 +4,8 @@ module WaifuLang.Parser (parseSExprEither, parseSExprMultipleEither) where
 import Control.Monad (void)
 import Data.Void
 import Data.Maybe (fromMaybe)
+import Data.List (sortBy)
+import Data.Ord (comparing)
 import Text.Megaparsec
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
@@ -38,10 +40,19 @@ keywords =
   , "contains", "empty", "length", "split", "puts", "the", "Darkness"
   , "needs", "look", "mark", "listen", "inside", "throughout", "pass", "break", "into", "for"
   , "Fern", "Fubuki", "Mai", "Noelle", "Yoruichi", "Yuki", "attracts"
+  , "says", "operates", "performs", "finishes", "operating", "performing"
+  , "looks", "leaves"
   ]
 
 waifuVerb :: String -> Parser ()
 waifuVerb base = void . try . lexeme $ string base >> optional (char 's') >> sc
+
+oneOfWords :: [String] -> Parser ()
+oneOfWords ws =
+  void . try . lexeme $
+    choice (map wordP (sortBy (comparing (negate . length)) ws)) >> sc
+  where
+    wordP w = string w >> notFollowedBy (alphaNumChar <|> char '_')
 
 identifier :: Parser String
 identifier = (lexeme . try) $ do
@@ -455,20 +466,21 @@ parseMapRemove = do
 
 parsePrint :: Parser SExpr
 parsePrint = do
-  _ <- identifier >> reserved "say"
+  _ <- identifier >> oneOfWords ["say", "says"]
   expr <- parseExpression <* dot
   return $ SList [SSymbol "call", SSymbol "peric", SList [expr]]
 
 parseDarknessPrint :: Parser SExpr
 parseDarknessPrint = do
-  _ <- reserved "Darkness" >> reserved "say"
+  _ <- reserved "Darkness" >> oneOfWords ["say", "says"]
   expr <- parseExpression <* dot
   return $ SList [SSymbol "call", SSymbol "darkness", SList [expr]]
 
 parseExit :: Parser SExpr
 parseExit = do
   reserved "Albedo"
-  _ <- optional (try (void (reserved "leaves") >> void (reserved "with")))
+  oneOfWords ["leave", "leaves"]
+  reserved "with"
   val <- parseExpression <* dot
   return $ SList [SSymbol "return", val]
 
@@ -504,8 +516,9 @@ intoOrFor = void $ choice [try (reserved "into"), try (reserved "for")]
 parseMaiRead :: Parser SExpr
 parseMaiRead = do
   reserved "Mai"
-  reserved "needs"
-  reserved "look"
+  oneOfWords ["need", "needs"]
+  optional (try $ reserved "to")
+  oneOfWords ["look", "looks"]
   reserved "inside"
   file <- parseExpression
   intoOrFor
@@ -553,14 +566,18 @@ parseYoruichiInput = choice
 
 parseIf :: Parser SExpr
 parseIf = do
-  _ <- identifier >> reserved "thinks"
+  _ <- identifier >> oneOfWords ["think", "thinks"]
   cond <- (optional (reserved "that") *> parseFullCondition)
   reserved "so" >> parseBody >>= \b -> return $ SList [SSymbol "if", cond, b, SList []]
 
 parseFor :: Parser SExpr
 parseFor = do
   waifu <- identifier
-  reserved "will" >> reserved "operate" >> reserved "until"
+  choice
+    [ try (reserved "will" >> reserved "operate")
+    , reserved "operates"
+    ]
+  reserved "until"
   _ <- try (reserved waifu >> reserved "nickname")
   v <- identifier
   reserved "equal" >> reserved "to"
@@ -569,29 +586,42 @@ parseFor = do
   limit <- parseExpression
   reserved "and" >> reserved "incremented" >> reserved "by" >> reserved "1"
   reserved "each" >> reserved "time" <* dot
-  body <- manyTill (sc >> parseStatement) (try $ reserved waifu >> reserved "finish")
-  _ <- reserved "to" >> reserved "operate" <* dot
+  body <- manyTill (sc >> parseStatement) (try $ reserved waifu >> choice [try (reserved "finishes"), reserved "finish"])
+  choice
+    [ try (reserved "to" >> reserved "operate")
+    , reserved "operating"
+    ] <* dot
   return $ SList [SSymbol "call", SSymbol "for", SList [SSymbol v, start, limit, SList (SSymbol "block" : body)]]
 
 parseForEach :: Parser SExpr
 parseForEach = do
   waifu <- identifier
-  reserved "will" >> reserved "operate"
+  choice
+    [ try (reserved "will" >> reserved "operate")
+    , reserved "operates"
+    ]
   reserved "on" >> reserved "each" >> optional (reserved "item") >> reserved "in"
   listVar <- identifier
   reserved "and" >> reserved "incremented" >> reserved "by" >> reserved "1"
   reserved "each" >> reserved "time" <* dot
-  body <- manyTill (sc >> parseStatement) (try $ reserved waifu >> reserved "finish")
-  _ <- reserved "to" >> reserved "operate" <* dot
+  body <- manyTill (sc >> parseStatement) (try $ reserved waifu >> choice [try (reserved "finishes"), reserved "finish"])
+  choice
+    [ try (reserved "to" >> reserved "operate")
+    , reserved "operating"
+    ] <* dot
   return $ SList [SSymbol "for-each", SSymbol "item", SSymbol listVar, SList (SSymbol "block" : body)]
 
 parseWhile :: Parser SExpr
 parseWhile = do
   waifu <- identifier
-  reserved "perform" >> reserved "until"
+  choice [try (reserved "performs"), reserved "perform"]
+  reserved "until"
   cond <- parseFullCondition <* dot
-  body <- manyTill (sc >> parseStatement) (try $ reserved waifu >> reserved "finish")
-  _ <- reserved "to" >> reserved "perform" <* dot
+  body <- manyTill (sc >> parseStatement) (try $ reserved waifu >> choice [try (reserved "finishes"), reserved "finish"])
+  choice
+    [ try (reserved "to" >> reserved "perform")
+    , reserved "performing"
+    ] <* dot
   return $ SList [SSymbol "call", SSymbol "while", SList [cond, SList (SSymbol "block" : body)]]
 
 parseFullCondition :: Parser SExpr
