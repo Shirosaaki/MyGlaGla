@@ -11,78 +11,85 @@ import System.Environment (getArgs)
 import System.Exit (die, exitWith, ExitCode(ExitFailure, ExitSuccess))
 import System.FilePath (takeExtension)
 import Console (runConsole, runBatch)
-import Parser (parseSExprMultipleEither, setUseLisp, setUseWaifu) -- Ajout de setUseWaifu
+import Parser (Dialect(..), dialectForFile, parseSExprMultipleEither)
 import AST (sexprToAST, Ast(..), evalAST, SExpr)
 import Compiler (compileToObject, compileToLL, compileToBytecodeFile, compileSourceFile, CompileMode(..))
 import Loader (loadBytecodeFile, disassemble)
 import ELFLoader (loadAndExecuteELF)
 import VM (runVM)
 import qualified VM
-import Control.Monad (when)
+import Data.Maybe (fromMaybe)
 import UI (printError)
 
 main :: IO ()
 main = getArgs >>= \rawArgs -> do
-    -- Détection des drapeaux (flags)
-    let useLisp = "-l" `elem` rawArgs
-        useWaifu = "-w" `elem` rawArgs
-        -- On nettoie les arguments pour ne garder que les commandes/fichiers
-        args = filter (\a -> a /= "-l" && a /= "-w") rawArgs
-    
-    -- Activation des modes dans le module Parser
-    when useLisp (setUseLisp True)
-    when useWaifu (setUseWaifu True)
-    
-    dispatch args
+    -- Explicit flags override the extension-based detection.
+    let flagDialect
+          | "-l" `elem` rawArgs = Just Lisp
+          | "-w" `elem` rawArgs = Just Waifu
+          | "-t" `elem` rawArgs = Just TheShow
+          | otherwise           = Nothing
+        args = filter (`notElem` ["-l", "-w", "-t"]) rawArgs
+    dispatch flagDialect args
 
-dispatch :: [String] -> IO ()
--- Multi-file: glados -c out.o out2.o -w main.waifu lib.waifu
-dispatch ("-c" : rest) | length rest >= 2 && even (length rest) =
+-- | Dialect for a given source file: flag first, then file extension
+-- (.waifu, .tslang, .scm, ...), then TheShow as default.
+dialectFor :: Maybe Dialect -> FilePath -> Dialect
+dialectFor flagDialect file =
+    fromMaybe (fromMaybe TheShow (dialectForFile file)) flagDialect
+
+dispatch :: Maybe Dialect -> [String] -> IO ()
+-- Multi-file: glados -c out.o out2.o main.waifu lib.waifu
+dispatch fd ("-c" : rest) | length rest >= 2 && even (length rest) =
     let n = length rest `div` 2
         (objOuts, srcFiles) = splitAt n rest
-    in if n > 1
-       then compileMultiple (zip objOuts srcFiles)
-       else compileSourceFile (head objOuts) (head srcFiles) MainModule
-            >> putStrLn "Compilation completed successfully."
+    in case (objOuts, srcFiles) of
+         ([objOut], [srcFile]) ->
+             compileSourceFile (dialectFor fd srcFile) objOut srcFile MainModule
+             >> putStrLn "Compilation completed successfully."
+         _ -> compileMultiple fd (zip objOuts srcFiles)
 -- Cas avec fichier source : glados -c out.o source.waifu
-dispatch ["-S", llOut, inFile] = compileFromFile inFile (compileToLL llOut)
-dispatch ["-c", objOut, inFile] = compileSourceFile objOut inFile MainModule
+dispatch fd ["-S", llOut, inFile] = compileFromFile (dialectFor fd inFile) inFile (compileToLL llOut)
+dispatch fd ["-c", objOut, inFile] = compileSourceFile (dialectFor fd inFile) objOut inFile MainModule
                               >> putStrLn "Compilation completed successfully."
-dispatch ["-B", byteOut, inFile] = compileFromFile inFile (compileToBytecodeFile byteOut)
+dispatch fd ["-B", byteOut, inFile] = compileFromFile (dialectFor fd inFile) inFile (compileToBytecodeFile byteOut)
 
--- Cas avec stdin (existant) : cat source.waifu | glados -c out.o
-dispatch ["-S", llOut] = compileFromStdin (compileToLL llOut)
-dispatch ["-c", objOut] = compileFromStdin (compileToObject objOut)
-dispatch ["-B", byteOut] = compileFromStdin (compileToBytecodeFile byteOut)
+-- Cas avec stdin : cat source.waifu | glados -c out.o
+dispatch fd ["-S", llOut] = compileFromStdin (stdinDialect fd) (compileToLL llOut)
+dispatch fd ["-c", objOut] = compileFromStdin (stdinDialect fd) (compileToObject objOut)
+dispatch fd ["-B", byteOut] = compileFromStdin (stdinDialect fd) (compileToBytecodeFile byteOut)
 
-dispatch ["-d", file] = runDisassembleMode file
-dispatch [file] 
+dispatch _ ["-d", file] = runDisassembleMode file
+dispatch fd [file]
     | takeExtension file == ".o" = runVMMode file
-    | otherwise = runFileMode file
-dispatch [] = runInteractive
-dispatch _ = die "Usage: glados [-l] [-w] [-S out.ll [file] | -c out.o [out2.o ...] [file] [file2 ...] | -B out.byte [file] | -d file.o | file.o | file.scm]"
+    | otherwise = runFileMode (dialectFor fd file) file
+dispatch fd [] = runInteractive (stdinDialect fd)
+dispatch _ _ = die "Usage: glados [-l] [-w] [-t] [-S out.ll [file] | -c out.o [out2.o ...] [file] [file2 ...] | -B out.byte [file] | -d file.o | file.o | file.scm]"
 
-compileMultiple :: [(FilePath, FilePath)] -> IO ()
-compileMultiple [] = return ()
-compileMultiple pairs = go pairs 0 >> putStrLn "Compilation completed successfully."
+stdinDialect :: Maybe Dialect -> Dialect
+stdinDialect = fromMaybe TheShow
+
+compileMultiple :: Maybe Dialect -> [(FilePath, FilePath)] -> IO ()
+compileMultiple _ [] = return ()
+compileMultiple fd pairs = go pairs (0 :: Int) >> putStrLn "Compilation completed successfully."
   where
     go [] _ = return ()
     go ((objOut, srcFile) : rest) i = do
       let mode = if i == 0 then MainModule else LibraryModule
-      compileSourceFile objOut srcFile mode
+      compileSourceFile (dialectFor fd srcFile) objOut srcFile mode
       go rest (i + 1)
 
-runInteractive :: IO ()
-runInteractive = do
+runInteractive :: Dialect -> IO ()
+runInteractive dialect = do
     isTTY <- hIsTerminalDevice stdin
-    if isTTY then runConsole else getContents >>= runBatch
+    if isTTY then runConsole dialect else getContents >>= runBatch dialect
 
 
 
-runFileMode :: FilePath -> IO ()
-runFileMode path = do
+runFileMode :: Dialect -> FilePath -> IO ()
+runFileMode dialect path = do
     input <- readFile path
-    case parseSExprMultipleEither input of
+    case parseSExprMultipleEither dialect input of
         Right sexprs -> evalSequence [] sexprs
         Left err -> printError err >>
                     exitWith (ExitFailure 84)
@@ -146,21 +153,21 @@ printVMResult (VM.VMClosure {}) = putStrLn "#<closure>"
 printVMResult VM.VMVoid = return ()
 
 -- Nouvelle fonction pour compiler depuis un fichier
-compileFromFile :: FilePath -> (Ast -> IO ()) -> IO ()
-compileFromFile path compile = do
+compileFromFile :: Dialect -> FilePath -> (Ast -> IO ()) -> IO ()
+compileFromFile dialect path compile = do
     input <- readFile path
-    processAndCompile input compile
+    processAndCompile dialect input compile
 
 -- On factorise la logique de compilation pour qu'elle soit utilisée par stdin ET file
-compileFromStdin :: (Ast -> IO ()) -> IO ()
-compileFromStdin compile = do
+compileFromStdin :: Dialect -> (Ast -> IO ()) -> IO ()
+compileFromStdin dialect compile = do
     input <- getContents
-    processAndCompile input compile
+    processAndCompile dialect input compile
 
 -- Logique commune de transformation SExpr -> AST -> Compilation
-processAndCompile :: String -> (Ast -> IO ()) -> IO ()
-processAndCompile input compile = 
-    case parseSExprMultipleEither input of
+processAndCompile :: Dialect -> String -> (Ast -> IO ()) -> IO ()
+processAndCompile dialect input compile = 
+    case parseSExprMultipleEither dialect input of
         Left err -> printError ("Parsing error:\n" ++ err) >> exitWith (ExitFailure 84)
         Right sexprs -> do
             case mapM sexprToAST sexprs of

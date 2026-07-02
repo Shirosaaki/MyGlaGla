@@ -26,22 +26,31 @@ reserved :: String -> Parser ()
 reserved w = void . lexeme . try $ string w *> notFollowedBy (alphaNumChar <|> char '_')
 
 dot :: Parser ()
-dot = void (symbol ".")
+dot = void (symbol ".") <?> "'.' at end of statement"
 
+-- | Hard-reserved words: they can appear right after an expression (or start
+-- a construct), so allowing them as identifiers would make the grammar
+-- ambiguous. Everyday nouns ("a", "the", "first", "position", "time", ...)
+-- are contextual: they are matched with 'reserved' where the grammar needs
+-- them but stay valid identifiers everywhere else.
 keywords :: [String]
 keywords =
-  [ "thinks", "that", "so", "and", "or", "is", "nickname", "takes"
-  , "perform", "until", "will", "finish", "say", "leave", "leaves", "different"
-  , "something", "operate", "incremented", "by", "each", "time", "equal"
-  , "equals", "greater", "lower", "than", "to", "with", "doesn't", "have"
-  , "has", "nothing", "a", "an", "about", "borns", "view", "get", "gets", "Albedo"
-  , "adds", "removes", "after", "first", "second", "third", "fourth", "fifth"
-  , "sixth", "seventh", "eighth", "ninth", "tenth", "at", "position", "on", "in"
-  , "contains", "empty", "length", "split", "puts", "the", "Darkness"
-  , "needs", "look", "mark", "listen", "inside", "throughout", "pass", "break", "into", "for"
-  , "Fern", "Fubuki", "Mai", "Noelle", "Yoruichi", "Yuki", "attracts"
-  , "says", "operates", "performs", "finishes", "operating", "performing"
-  , "looks", "leaves"
+  [ "think", "thinks", "that", "so", "and", "or", "is", "not", "from"
+  , "nickname", "takes"
+  , "perform", "performs", "performing"
+  , "operate", "operates", "operating"
+  , "finish", "finishes", "until", "will"
+  , "say", "says", "leave", "leaves"
+  , "equal", "equals", "greater", "lower", "than", "to"
+  , "different", "something", "nothing"
+  , "incremented", "decremented", "by", "each"
+  , "doesn't", "have", "has", "with", "about", "borns"
+  , "view", "get", "gets"
+  , "adds", "removes", "puts", "at", "after", "on", "in"
+  , "contains", "empty", "length", "split"
+  , "needs", "need", "look", "looks", "mark", "listen", "inside"
+  , "throughout", "pass", "break", "into", "for", "attracts"
+  , "Albedo", "Darkness", "Fern", "Fubuki", "Mai", "Noelle", "Yoruichi", "Yuki"
   ]
 
 waifuVerb :: String -> Parser ()
@@ -55,10 +64,10 @@ oneOfWords ws =
     wordP w = string w >> notFollowedBy (alphaNumChar <|> char '_')
 
 identifier :: Parser String
-identifier = (lexeme . try) $ do
+identifier = label "identifier" . lexeme . try $ do
   name <- (:) <$> (letterChar <|> char '_') <*> many (alphaNumChar <|> char '_')
   if name `elem` keywords
-    then fail $ "mot réservé : " ++ name
+    then fail $ "reserved word '" ++ name ++ "' cannot be used as an identifier"
     else return name
 
 ordinalWord :: Parser Int
@@ -68,11 +77,11 @@ ordinalWord = choice
   , reserved "fifth"  >> return 5, reserved "sixth"  >> return 6
   , reserved "seventh" >> return 7, reserved "eighth" >> return 8
   , reserved "ninth"  >> return 9, reserved "tenth"  >> return 10
-  ]
+  ] <?> "ordinal (first, second, ...)"
 
 parseIndex :: Parser SExpr
 parseIndex = choice
-  [ try $ do _ <- optional (reserved "the"); o <- ordinalWord; optional (reserved "position"); return (SInt (o - 1))
+  [ try $ do _ <- optional (reserved "the"); o <- ordinalWord; _ <- optional (reserved "position"); return (SInt (o - 1))
   , parseExpression
   ]
 
@@ -81,7 +90,7 @@ parseIndex = choice
 -- ============================================================================
 
 parseExpression :: Parser SExpr
-parseExpression = parseAddSub
+parseExpression = parseAddSub <?> "expression"
 
 parseAddSub :: Parser SExpr
 parseAddSub = do
@@ -102,7 +111,7 @@ parseMulDiv = do
   parseMulDivRest left
   where
     parseMulDivRest acc = do
-      op <- optional . try $ choice [symbol "*", symbol "/"]
+      op <- optional . try $ choice [symbol "*", symbol "/", symbol "%"]
       case op of
         Nothing -> return acc
         Just o  -> do
@@ -137,7 +146,11 @@ parseAtAccess = do
 
 parseCall :: Parser SExpr
 parseCall = do
-  atoms <- some (try parseAtom)
+  -- Only the first atom may carry a sign: this keeps "a - 5" and "a -5"
+  -- parsing as subtraction instead of a call with a negative argument.
+  first <- try parseAtom
+  rest  <- many (try parseAtomNoSign)
+  let atoms = first : rest
   case atoms of
     [SSymbol id1, SSymbol id2] ->
         return $ SList [SSymbol "call", SSymbol id2, SList [SSymbol id1]]
@@ -147,10 +160,20 @@ parseCall = do
         if null rest then return (SSymbol id1)
         else return $ SList [SSymbol "call", SSymbol id1, SList rest]
     [single] -> return single
-    _ -> fail "Expression invalide"
+    _ -> fail "invalid expression"
 
+-- | Number literals accept an optional sign glued to the digits ("-5", "+3.2").
 parseAtom :: Parser SExpr
 parseAtom = choice
+  [ try (SFloat <$> lexeme (L.signed (pure ()) L.float))
+  , try (SInt . fromIntegral <$> (lexeme (L.signed (pure ()) L.decimal) :: Parser Integer))
+  , parseAtomNoSign
+  ] <?> "value"
+
+-- | Atom without a leading sign, used for the arguments of a call chain so
+-- that "a -5" keeps meaning subtraction rather than a call with argument -5.
+parseAtomNoSign :: Parser SExpr
+parseAtomNoSign = choice
   [ try (SFloat <$> lexeme L.float)
   , try (SInt . fromIntegral <$> (lexeme L.decimal :: Parser Integer))
   , try (symbol "(" *> parseExpression <* symbol ")")
@@ -158,14 +181,14 @@ parseAtom = choice
   , SChar   <$> (char '\'' *> L.charLiteral <* char '\'' <* sc)
   , try (reserved "nothing" >> return (SSymbol "nothing"))
   , SSymbol <$> identifier
-  ]
+  ] <?> "value"
 
 -- ============================================================================
 -- STATEMENTS
 -- ============================================================================
 
 parseStatement :: Parser SExpr
-parseStatement = sc >> choice
+parseStatement = (sc >> choice
   [ try parseClass
   , try parseIf
   , try parseForEach
@@ -190,7 +213,7 @@ parseStatement = sc >> choice
   , try parsePrint
   , try parseExit
   , try (parseExpression <* dot)
-  ]
+  ]) <?> "statement"
 
 parseBody :: Parser SExpr
 parseBody = choice
@@ -246,7 +269,7 @@ parseField pronoun = do
   let (fld, mTy) = case mSecondId of { Just s -> (s, Just firstId); Nothing -> (firstId, Nothing) }
   reserved "equal" >> reserved "to"
   val <- parseExpression <* dot
-  return $ SList [SSymbol "field", SSymbol fld, val, SSymbol (maybe "int" id mTy)]
+  return $ SList [SSymbol "field", SSymbol fld, val, SSymbol (fromMaybe "int" mTy)]
 
 parseMethod :: String -> Parser SExpr
 parseMethod pronoun = do
@@ -296,8 +319,8 @@ parseMainDecl = do
 parseConstBinding :: String -> Parser SExpr
 parseConstBinding fName = do
   val <- choice
-    [ try (SFloat <$> lexeme L.float)
-    , try (SInt . fromIntegral <$> (lexeme L.decimal :: Parser Integer))
+    [ try (SFloat <$> lexeme (L.signed (pure ()) L.float))
+    , try (SInt . fromIntegral <$> (lexeme (L.signed (pure ()) L.decimal) :: Parser Integer))
     , SString <$> (char '"' *> manyTill L.charLiteral (char '"') <* sc)
     , SChar <$> (char '\'' *> L.charLiteral <* char '\'' <* sc)
     , reserved "nothing" >> return (SSymbol "nothing")
@@ -379,7 +402,7 @@ parseAssignment = do
 parseMapPairFromKey :: Parser SExpr
 parseMapPairFromKey = do
   k <- parseTakesValue
-  symbol ":"
+  _ <- symbol ":"
   v <- parseTakesValue
   return $ SList [k, v]
 
@@ -429,7 +452,7 @@ parseRemoveMode = choice
       return $ SList [SSymbol "at-index", SInt (o - 1)]
   , try $ do
       reserved "after"
-      optional (reserved "the")
+      _ <- optional (reserved "the")
       target <- parseExpression
       return $ SList [SSymbol "after-value", SInt 1, target]
   , try $ do
@@ -447,7 +470,7 @@ parseMapPut = do
   v <- identifier
   reserved "puts"
   k <- parseExpression
-  symbol ":"
+  _ <- symbol ":"
   val <- parseTakesValue
   dot
   return $ SList [SSymbol "map-put", SSymbol v, k, val]
@@ -517,7 +540,7 @@ parseMaiRead :: Parser SExpr
 parseMaiRead = do
   reserved "Mai"
   oneOfWords ["need", "needs"]
-  optional (try $ reserved "to")
+  _ <- optional (try $ reserved "to")
   oneOfWords ["look", "looks"]
   reserved "inside"
   file <- parseExpression
@@ -544,7 +567,7 @@ parseYoruichiInput = choice
   [ try $ do
       reserved "Yoruichi"
       waifuVerb "want"
-      optional (try $ reserved "to")
+      _ <- optional (try $ reserved "to")
       reserved "listen"
       prompt <- parseExpression
       intoOrFor
@@ -555,7 +578,7 @@ parseYoruichiInput = choice
   , do
       reserved "Yoruichi"
       waifuVerb "want"
-      optional (try $ reserved "to")
+      _ <- optional (try $ reserved "to")
       reserved "listen"
       intoOrFor
       var <- identifier
@@ -564,12 +587,49 @@ parseYoruichiInput = choice
                       SList [SSymbol "call", SSymbol "romaric", SList [SString ""]]]
   ]
 
+-- ============================================================================
+-- CONTROL FLOW
+-- ============================================================================
+
+-- | If statement with a real else clause:
+--     Alya thinks that <cond> so <body>
+--     Erina thinks something different so <body>            (else)
+--     Erina thinks something different and that <cond> so   (else-if)
 parseIf :: Parser SExpr
 parseIf = do
-  _ <- identifier >> oneOfWords ["think", "thinks"]
-  cond <- (optional (reserved "that") *> parseFullCondition)
-  reserved "so" >> parseBody >>= \b -> return $ SList [SSymbol "if", cond, b, SList []]
+  _ <- identifier
+  oneOfWords ["think", "thinks"]
+  cond <- optional (reserved "that") *> parseFullCondition
+  reserved "so"
+  thenB <- parseBody
+  elseB <- option (SList []) (try parseElseClause)
+  return $ SList [SSymbol "if", cond, thenB, elseB]
 
+parseElseClause :: Parser SExpr
+parseElseClause = do
+  sc
+  _ <- identifier
+  oneOfWords ["think", "thinks"]
+  reserved "something" >> reserved "different"
+  choice
+    [ try $ do
+        reserved "and"
+        cond <- optional (reserved "that") *> parseFullCondition
+        reserved "so"
+        b <- parseBody
+        e <- option (SList []) (try parseElseClause)
+        return $ SList [SSymbol "if", cond, b, e]
+    , do
+        reserved "so"
+        parseBody
+    ]
+
+-- | Counting loop:
+--     C18 operates until Mikasa nickname i equal to 0 is lower than 10
+--     and incremented by 1 each time.
+--     ...
+--     C18 finishes operating.
+-- Supports "incremented"/"decremented" with any step expression.
 parseFor :: Parser SExpr
 parseFor = do
   waifu <- identifier
@@ -578,21 +638,34 @@ parseFor = do
     , reserved "operates"
     ]
   reserved "until"
-  _ <- try (reserved waifu >> reserved "nickname")
+  _ <- identifier
+  reserved "nickname"
   v <- identifier
   reserved "equal" >> reserved "to"
   start <- parseExpression
-  reserved "is" >> reserved "lower" >> reserved "than"
+  reserved "is"
+  cmp <- (reserved "lower" >> return "<") <|> (reserved "greater" >> return ">")
+  reserved "than"
   limit <- parseExpression
-  reserved "and" >> reserved "incremented" >> reserved "by" >> reserved "1"
+  reserved "and"
+  dir <- (reserved "incremented" >> return "up")
+     <|> (reserved "decremented" >> return "down")
+  reserved "by"
+  step <- parseExpression
   reserved "each" >> reserved "time" <* dot
   body <- manyTill (sc >> parseStatement) (try $ reserved waifu >> choice [try (reserved "finishes"), reserved "finish"])
   choice
     [ try (reserved "to" >> reserved "operate")
     , reserved "operating"
     ] <* dot
-  return $ SList [SSymbol "call", SSymbol "for", SList [SSymbol v, start, limit, SList (SSymbol "block" : body)]]
+  return $ SList [SSymbol "call", SSymbol "for",
+                  SList [SSymbol v, start, limit, step, SSymbol dir, SSymbol cmp,
+                         SList (SSymbol "block" : body)]]
 
+-- | For-each loop with a named loop variable:
+--     C18 operates on each fruit in basket.
+--     ...
+--     C18 finishes operating.
 parseForEach :: Parser SExpr
 parseForEach = do
   waifu <- identifier
@@ -600,16 +673,20 @@ parseForEach = do
     [ try (reserved "will" >> reserved "operate")
     , reserved "operates"
     ]
-  reserved "on" >> reserved "each" >> optional (reserved "item") >> reserved "in"
+  reserved "on" >> reserved "each"
+  var <- identifier
+  reserved "in"
   listVar <- identifier
-  reserved "and" >> reserved "incremented" >> reserved "by" >> reserved "1"
-  reserved "each" >> reserved "time" <* dot
+  _ <- optional . try $
+    reserved "and" >> reserved "incremented" >> reserved "by"
+      >> parseExpression >> reserved "each" >> reserved "time"
+  dot
   body <- manyTill (sc >> parseStatement) (try $ reserved waifu >> choice [try (reserved "finishes"), reserved "finish"])
   choice
     [ try (reserved "to" >> reserved "operate")
     , reserved "operating"
     ] <* dot
-  return $ SList [SSymbol "for-each", SSymbol "item", SSymbol listVar, SList (SSymbol "block" : body)]
+  return $ SList [SSymbol "for-each", SSymbol var, SSymbol listVar, SList (SSymbol "block" : body)]
 
 parseWhile :: Parser SExpr
 parseWhile = do
@@ -624,18 +701,49 @@ parseWhile = do
     ] <* dot
   return $ SList [SSymbol "call", SSymbol "while", SList [cond, SList (SSymbol "block" : body)]]
 
+-- ============================================================================
+-- CONDITIONS
+-- ============================================================================
+
+-- | Full condition with "and" / "or" chaining (left-associative):
+--     a is equal to 10 and that b is equal to 3
+--     a is equal to 4 or equal to 9      (right side reuses the left operand)
 parseFullCondition :: Parser SExpr
-parseFullCondition = choice
-  [ try $ reserved "something" >> reserved "different" >> return (SInt 1)
-  , try parseListMapCondition
-  , try parseStrContainsCondition
+parseFullCondition = (do
+  (c, ml) <- parseCondAtom
+  chainCond c ml) <?> "condition"
+
+-- | One comparison / membership test. Also returns the left operand so a
+-- following short-form "or equal to X" can reuse it.
+parseCondAtom :: Parser (SExpr, Maybe SExpr)
+parseCondAtom = choice
+  [ (\c -> (c, Nothing)) <$> try parseListMapCondition
+  , (\c -> (c, Nothing)) <$> try parseStrContainsCondition
   , do
       left <- parseExpression
       op <- optional . try $ (many (reserved "is" <|> reserved "that") >> parseComparisonOp)
       case op of
-        Nothing -> return left
-        Just o  -> parseExpression >>= \right -> return $ SList [SSymbol o, left, right]
+        Nothing -> return (left, Just left)
+        Just o  -> do
+          right <- parseExpression
+          return (SList [SSymbol o, left, right], Just left)
   ]
+
+chainCond :: SExpr -> Maybe SExpr -> Parser SExpr
+chainCond acc ml = option acc . try $ do
+  op <- (reserved "and" >> return "&&") <|> (reserved "or" >> return "||")
+  choice
+    [ try $ do
+        o <- optional (reserved "that") >> many (reserved "is") >> parseComparisonOp
+        r <- parseExpression
+        case ml of
+          Just l  -> chainCond (SList [SSymbol op, acc, SList [SSymbol o, l, r]]) ml
+          Nothing -> fail "cannot chain a comparison here: no left operand to reuse"
+    , do
+        _ <- optional (reserved "that")
+        (c2, ml2) <- parseCondAtom
+        chainCond (SList [SSymbol op, acc, c2]) ml2
+    ]
 
 parseListMapCondition :: Parser SExpr
 parseListMapCondition = do
@@ -656,18 +764,21 @@ parseStrContainsCondition = do
   return $ SList [SSymbol "str-contains", SSymbol s, needle]
 
 parseComparisonOp :: Parser String
-parseComparisonOp = choice $ map try
+parseComparisonOp = (choice $ map try
   [ reserved "greater" *> reserved "or" *> reserved "equal" *> reserved "to" *> return ">="
   , reserved "lower"   *> reserved "or" *> reserved "equal" *> reserved "to" *> return "<="
   , reserved "greater" *> reserved "than" *> return ">"
   , reserved "lower"   *> reserved "than" *> return "<"
+  , reserved "not" *> (reserved "equals" <|> reserved "equal") *> reserved "to" *> return "!="
+  , reserved "different" *> reserved "from" *> return "!="
   , (reserved "equals" <|> reserved "equal") *> reserved "to" *> return "=="
   , reserved "equals" *> return "=="
   , reserved "equal"  *> return "=="
   , reserved "is"     *> return "=="
   , symbol "==" *> return "=="
+  , symbol "!=" *> return "!="
   , symbol "="  *> return "=="
-  ]
+  ]) <?> "comparison (equal to, greater than, ...)"
 
 -- ============================================================================
 -- EXPORTS

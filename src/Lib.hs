@@ -6,12 +6,14 @@
 -}
 module Lib (SExpr(..), Ast(..), Type(..), Env, sexprToAST, evalAST, EvalResult,
             defName, defValue,
+            Dialect(..), dialectForFile,
             parseSExpr, parseSExprMultiple, parseSExprEither,
             parseSExprMultipleEither,
             runConsole, runBatch) where
 
 import AST (SExpr(..), Ast(..), Type(..), Env, sexprToAST, evalAST, EvalResult,
             defName, defValue)
-import Parser (parseSExpr, parseSExprMultiple, parseSExprEither,
+import Parser (Dialect(..), dialectForFile,
+               parseSExpr, parseSExprMultiple, parseSExprEither,
                parseSExprMultipleEither)
 import Console (runConsole, runBatch)

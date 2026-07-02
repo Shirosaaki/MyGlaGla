@@ -12,77 +12,77 @@ import Control.Monad.IO.Class (liftIO)
 import System.Console.Haskeline
 import AST (SExpr(..), Ast(..), Env,
             sexprToAST, evalAST)
-import Parser (parseSExprMultipleEither)
+import Parser (Dialect, parseSExprMultipleEither)
 import UI (printError)
 
 -- Interactive REPL runner
-runConsole :: IO ()
-runConsole = runInputT defaultSettings (repl [])
+runConsole :: Dialect -> IO ()
+runConsole dialect = runInputT defaultSettings (repl dialect [])
 
 type ReplM = InputT IO
 
-repl :: Env -> ReplM ()
-repl env = do
+repl :: Dialect -> Env -> ReplM ()
+repl dialect env = do
     minput <- getInputLine "> "
     case minput of
         Nothing -> outputStrLn ""  -- Ctrl-D exits
-        Just line -> handleInput env line
+        Just line -> handleInput dialect env line
 
 -- | Route input based on command or content
-handleInput :: Env -> String -> ReplM ()
-handleInput env ":code" = captureBlock env []
-handleInput env line
-    | null (trim line) = repl env
-    | otherwise = handleLine env line
+handleInput :: Dialect -> Env -> String -> ReplM ()
+handleInput dialect env ":code" = captureBlock dialect env []
+handleInput dialect env line
+    | null (trim line) = repl dialect env
+    | otherwise = handleLine dialect env line
 
 -- | Handle a single-line entry: parse and evaluate immediately.
-handleLine :: Env -> String -> ReplM ()
-handleLine env line =
-    case parseSExprMultipleEither line of
-        Right sexprs -> evalReplSequence env sexprs
-        Left err -> liftIO (printError ("Parsing error: " ++ err)) >> repl env
+handleLine :: Dialect -> Env -> String -> ReplM ()
+handleLine dialect env line =
+    case parseSExprMultipleEither dialect line of
+        Right sexprs -> evalReplSequence dialect env sexprs
+        Left err -> liftIO (printError ("Parsing error: " ++ err)) >> repl dialect env
 
 -- | Capture a multi-line block until ':end', then execute the whole block.
-captureBlock :: Env -> [String] -> ReplM ()
-captureBlock env acc = do
+captureBlock :: Dialect -> Env -> [String] -> ReplM ()
+captureBlock dialect env acc = do
     mline <- getInputLine "| "
     case mline of
         Nothing -> outputStrLn ""  -- EOF exits block
-        Just ":end" -> execBlock env acc
-        Just line -> captureBlock env (line : acc)
+        Just ":end" -> execBlock dialect env acc
+        Just line -> captureBlock dialect env (line : acc)
 
-execBlock :: Env -> [String] -> ReplM ()
-execBlock env acc =
+execBlock :: Dialect -> Env -> [String] -> ReplM ()
+execBlock dialect env acc =
     let block = unlines (reverse acc)
     in if null (trim block)
-       then repl env
-       else case parseSExprMultipleEither block of
-           Right sexprs -> evalReplSequence env sexprs
-           Left err -> liftIO (printError ("Parsing error: " ++ err)) >> repl env
+       then repl dialect env
+       else case parseSExprMultipleEither dialect block of
+           Right sexprs -> evalReplSequence dialect env sexprs
+           Left err -> liftIO (printError ("Parsing error: " ++ err)) >> repl dialect env
 
 -- | Evaluate a list of s-expressions in the REPL context.
-evalReplSequence :: Env -> [SExpr] -> ReplM ()
-evalReplSequence env [] = repl env
-evalReplSequence env (s:ss) = do
+evalReplSequence :: Dialect -> Env -> [SExpr] -> ReplM ()
+evalReplSequence dialect env [] = repl dialect env
+evalReplSequence dialect env (s:ss) = do
     -- Debug: show the S-expression received before converting to AST
     outputStrLn ("[debug] SExpr -> " ++ show s)
     case sexprToAST s of
-        Right ast -> evalReplAst env ss ast
-        Left err -> liftIO (printError err) >> repl env
+        Right ast -> evalReplAst dialect env ss ast
+        Left err -> liftIO (printError err) >> repl dialect env
 
-evalReplAst :: Env -> [SExpr] -> Ast -> ReplM ()
-evalReplAst env ss ast =
+evalReplAst :: Dialect -> Env -> [SExpr] -> Ast -> ReplM ()
+evalReplAst dialect env ss ast =
     case evalAST env ast of
-        Right (result, env') -> printResult' result >> evalReplSequence env' ss
-        Left err -> liftIO (printError err) >> repl env
+        Right (result, env') -> printResult' result >> evalReplSequence dialect env' ss
+        Left err -> liftIO (printError err) >> repl dialect env
 
 trim :: String -> String
 trim = dropWhile (== ' ') . reverse . dropWhile (== ' ') . reverse
 
 -- Batch execution for stdin pipelines
-runBatch :: String -> IO ()
-runBatch input =
-    case parseSExprMultipleEither input of
+runBatch :: Dialect -> String -> IO ()
+runBatch dialect input =
+    case parseSExprMultipleEither dialect input of
         Right sexprs -> evalSequence [] sexprs
         Left err -> printError ("Parsing error:\n" ++ err) >>
                     exitWith (ExitFailure 84)

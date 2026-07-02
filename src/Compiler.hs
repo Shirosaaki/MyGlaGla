@@ -23,7 +23,7 @@ import Foreign.Marshal.Array (allocaArray)
 import Foreign.Storable (poke, peek)
 import WaifuRuntime (waifuRuntimeASM)
 import ListCompiler (inferValTag, emitListPush, emitTaggedPair, listRuntimeBuiltins, listErrorStrings)
-import Parser (parseSExprMultipleEither)
+import Parser (Dialect(..), dialectForFile, parseSExprMultipleEither)
 
 -- =============================================================================
 -- Configuration
@@ -86,7 +86,12 @@ collectVarTypes (Assign n (Call (AstSymbol "str-split") _)) _ =
 collectVarTypes (Assign n val) vt | isStringAst vt val = Map.singleton n TString
 collectVarTypes (Assign n (Call (AstSymbol f) _)) _ 
     | f `elem` ["renaud", "romaric", "str_concat"] = Map.singleton n TString
+    | f `elem` ["+", "-", "*", "/", "%", "list-at", "map-at", "str-len", "list-len"] =
+        Map.singleton n TInt
     | otherwise = Map.empty
+collectVarTypes (Assign n (AstInt _)) _ = Map.singleton n TInt
+collectVarTypes (Assign n (AstFloat _)) _ = Map.singleton n TFloat
+collectVarTypes (Assign n (AstChar _)) _ = Map.singleton n TChar
 collectVarTypes (Call (AstSymbol "define") [AstSymbol n, Call (AstSymbol "array-type") _]) _ = 
     Map.singleton n (TCustom "int[]")
 collectVarTypes (Call (AstSymbol "list-create") (AstSymbol n : _)) _ =
@@ -98,6 +103,8 @@ collectVarTypes (Call (AstSymbol "str-split") _) _ =
 collectVarTypes (Call (AstSymbol "for-each") [AstSymbol v, _, body]) structs =
     Map.insert v (TCustom "value") (collectVarTypes body structs)
 collectVarTypes (Call (AstSymbol "for") [AstSymbol v, _, _, body]) structs = 
+    Map.insert v TInt (collectVarTypes body structs)
+collectVarTypes (Call (AstSymbol "for") [AstSymbol v, _, _, _, _, _, body]) structs =
     Map.insert v TInt (collectVarTypes body structs)
 collectVarTypes (For v _ body) structs = 
     Map.insert v TInt (collectVarTypes body structs)
@@ -118,7 +125,9 @@ collectNamesForLocals (Call (AstSymbol "assign") [AstSymbol n, _]) = [n]
 collectNamesForLocals (Call (AstSymbol "list-create") (AstSymbol n : _)) = [n]
 collectNamesForLocals (Call (AstSymbol "map-create") (AstSymbol n : _)) = [n]
 collectNamesForLocals (Call (AstSymbol "for") [AstSymbol v, _, _, body]) = v : collectNamesForLocals body
-collectNamesForLocals (Call (AstSymbol "for-each") [AstSymbol v, _, body]) = v : collectNamesForLocals body
+collectNamesForLocals (Call (AstSymbol "for") [AstSymbol v, _, _, _, _, _, body]) = v : collectNamesForLocals body
+collectNamesForLocals (Call (AstSymbol "for-each") [AstSymbol v, _, body]) =
+    v : (v ++ "__tag") : collectNamesForLocals body
 collectNamesForLocals (Call (AstSymbol "while") [_, body]) = collectNamesForLocals body
 collectNamesForLocals (For v _ body) = v : collectNamesForLocals body
 collectNamesForLocals (While _ body) = collectNamesForLocals body
@@ -177,21 +186,26 @@ resolveIncludePathIO sourceFile incl
       srcExists <- doesFileExist fromSource
       if srcExists then return fromSource else return fromCwd
 
-parseSourceToAsts :: String -> Either String [Ast]
-parseSourceToAsts input =
-  case parseSExprMultipleEither input of
+parseSourceToAsts :: Dialect -> String -> Either String [Ast]
+parseSourceToAsts dialect input =
+  case parseSExprMultipleEither dialect input of
     Left err -> Left err
     Right sexprs ->
       case mapM sexprToAST sexprs of
         Left perr -> Left perr
         Right asts -> Right asts
 
-loadExportNames :: Set.Set FilePath -> FilePath -> IO (Either String [String])
-loadExportNames visited path
+-- Included files inherit the including file's dialect unless their extension
+-- identifies another one.
+includeDialect :: Dialect -> FilePath -> Dialect
+includeDialect inherited path = maybe inherited id (dialectForFile path)
+
+loadExportNames :: Dialect -> Set.Set FilePath -> FilePath -> IO (Either String [String])
+loadExportNames dialect visited path
   | path `Set.member` visited = return (Right [])
   | otherwise = do
       content <- readFile path
-      case parseSourceToAsts content of
+      case parseSourceToAsts (includeDialect dialect path) content of
         Left err -> return $ Left ("Include '" ++ path ++ "': " ++ err)
         Right asts -> do
           let direct = collectFunctionNames (Block asts)
@@ -203,10 +217,10 @@ loadExportNames visited path
   where
     loadExportNamesFrom vis sourceFile rel = do
       absPath <- resolveIncludePathIO sourceFile rel
-      loadExportNames (Set.insert absPath vis) absPath
+      loadExportNames dialect (Set.insert absPath vis) absPath
 
-resolveIncludes :: FilePath -> [Ast] -> IO (Either String ([Ast], [String]))
-resolveIncludes sourceFile asts = do
+resolveIncludes :: Dialect -> FilePath -> [Ast] -> IO (Either String ([Ast], [String]))
+resolveIncludes dialect sourceFile asts = do
   let includes = [rel | Include rel <- asts]
   result <- foldM (accumExport sourceFile) (Right []) includes
   case result of
@@ -220,7 +234,7 @@ resolveIncludes sourceFile asts = do
     accumExport _ (Left e) _ = return (Left e)
     accumExport src (Right acc) rel = do
       absPath <- resolveIncludePathIO src rel
-      loadResult <- loadExportNames Set.empty absPath
+      loadResult <- loadExportNames dialect Set.empty absPath
       case loadResult of
         Left err -> return (Left err)
         Right names -> return (Right (acc ++ names))
@@ -238,13 +252,13 @@ validateModule mode asts =
          | null funcs  -> Left "Library module must define at least one function (Toph nickname is name and takes ...)."
          | otherwise   -> Right ()
 
-compileSourceFile :: FilePath -> FilePath -> CompileMode -> IO ()
-compileSourceFile outPath sourcePath mode = do
+compileSourceFile :: Dialect -> FilePath -> FilePath -> CompileMode -> IO ()
+compileSourceFile dialect outPath sourcePath mode = do
   input <- readFile sourcePath
-  case parseSourceToAsts input of
+  case parseSourceToAsts dialect input of
     Left err -> printError ("Parsing error:\n" ++ err) >> exitFailure
     Right asts -> do
-      resolveResult <- resolveIncludes sourcePath asts
+      resolveResult <- resolveIncludes dialect sourcePath asts
       case resolveResult of
         Left err -> printError err >> exitFailure
         Right (resolved, externs) ->
@@ -484,7 +498,7 @@ exprToASM (Call (AstSymbol "list-at") [AstSymbol name, idxExpr]) locals labels v
         isMap = Map.lookup name vt == Just (TCustom "map")
     in if isMap
        then exprToASM idxExpr locals labels vt fns ++
-            ["movq -" ++ show listOff ++ "(%rbp), %rdi", "movq %rax, %rsi", "call map_get"]
+            mapGetChecked listOff labels
        else exprToASM idxExpr locals labels vt fns ++
             ["movq -" ++ show listOff ++ "(%rbp), %rdi", "movq %rax, %rsi", "call list_get_at",
              "cmpq $-1, %rax", "jne 1f",
@@ -543,8 +557,7 @@ exprToASM (Call (AstSymbol "map-contains") [AstSymbol mapName, keyExpr]) locals 
 
 exprToASM (Call (AstSymbol "map-at") [AstSymbol name, keyExpr]) locals labels vt fns =
     exprToASM keyExpr locals labels vt fns ++
-    ["movq -" ++ show (Map.findWithDefault 0 name locals) ++ "(%rbp), %rdi",
-     "movq %rax, %rsi", "call map_get"]
+    mapGetChecked (Map.findWithDefault 0 name locals) labels
 
 exprToASM (Call (AstSymbol "str-contains") [AstSymbol s, needleExpr]) locals labels vt fns =
     exprToASM needleExpr locals labels vt fns ++
@@ -739,13 +752,14 @@ stmtToASM (Call (AstSymbol "list-remove") [AstSymbol listVar, modeAst]) uid labe
             _ -> []
     in (uid + 1, instrs, li)
 
-stmtToASM (Call (AstSymbol "for-each") [AstSymbol itemVar, AstSymbol listName, body]) uid labels locals ret ls le vt li fns =
+stmtToASM (Call (AstSymbol "for-each") [AstSymbol itemVar, AstSymbol listName, body]) uid labels locals ret _ _ vt li fns =
     let listOff = Map.findWithDefault 0 listName locals
         itemOff = Map.findWithDefault 0 itemVar locals
+        tagOff = Map.findWithDefault 0 (itemVar ++ "__tag") locals
         lStart = ".Lfe_s_" ++ show uid
         lEnd = ".Lfe_e_" ++ show uid
-        idxOff = listOff + 100000  -- bad - use uid based temp on stack via r12
-        (_, bStmts, li') = emitStmts body (uid + 1) labels locals ret (Just lStart) (Just lEnd) 
+        lNext = ".Lfe_n_" ++ show uid
+        (_, bStmts, li') = emitStmts body (uid + 1) labels locals ret (Just lNext) (Just lEnd)
                            (Map.insert itemVar (TCustom "value") vt) li fns
         instrs =
           [ lStart ++ ":"
@@ -753,10 +767,12 @@ stmtToASM (Call (AstSymbol "for-each") [AstSymbol itemVar, AstSymbol listName, b
           , "movq %rax, %r12", "xorq %rbx, %rbx"
           , ".Lfe_i_" ++ show uid ++ ":"
           , "cmpq %rbx, %r12", "jge " ++ lEnd
+          , "movq -" ++ show listOff ++ "(%rbp), %rdi", "movq %rbx, %rsi", "call list_get_tag_at"
+          , "movq %rax, -" ++ show tagOff ++ "(%rbp)"
           , "movq -" ++ show listOff ++ "(%rbp), %rdi", "movq %rbx, %rsi", "call list_get_at"
           , "movq %rax, -" ++ show itemOff ++ "(%rbp)"
           ] ++ bStmts ++
-          [ "incq %rbx", "jmp .Lfe_i_" ++ show uid, lEnd ++ ":" ]
+          [ lNext ++ ":", "incq %rbx", "jmp .Lfe_i_" ++ show uid, lEnd ++ ":" ]
     in (uid + 2, instrs, li')
 
 stmtToASM (Call (AstSymbol "darkness") [arg]) uid labels locals _ _ _ vt li fns =
@@ -773,7 +789,7 @@ stmtToASM (Call (AstSymbol "darkness") [arg]) uid labels locals _ _ _ vt li fns 
             _ -> False
         prepList = if isList
                    then ["movq %rax, %rdi", "call list_to_string", "movq %rax, %rsi"]
-                   else ["movq %rax, %rsi"]
+                   else prepTaggedValue args locals vt ++ ["movq %rax, %rsi"]
         callDark =
             [ "leaq LC" ++ show fmtIdx ++ "(%rip), %rdi" ]
             ++ prepList
@@ -800,7 +816,8 @@ stmtToASM (Call (AstSymbol "peric") [arg]) uid labels locals _ _ _ vt li fns =
         prepOut = if isList
                   then [ "movq %rax, %rdi", "call list_to_string", "movq %rax, %rsi"
                        , "leaq LC" ++ show fmtIdx ++ "(%rip), %rdi", "movb $0, %al" ]
-                  else if isFloat then ["movq %rax, %xmm0", "movb $1, %al"] else ["movq %rax, %rsi", "movb $0, %al"]
+                  else if isFloat then ["movq %rax, %xmm0", "movb $1, %al"]
+                  else prepTaggedValue args locals vt ++ ["movq %rax, %rsi", "movb $0, %al"]
         callPrintf =
             [ "subq $8, %rsp" ]
             ++ (if isList then [] else [ "leaq LC" ++ show fmtIdx ++ "(%rip), %rdi" ])
@@ -845,15 +862,24 @@ stmtToASM Continue uid _ _ _ Nothing _ _ li _ = (uid, [], li)
 stmtToASM (AstSymbol "break") uid l loc ret ls le vt li fns = stmtToASM Break uid l loc ret ls le vt li fns
 stmtToASM (AstSymbol "continue") uid l loc ret ls le vt li fns = stmtToASM Continue uid l loc ret ls le vt li fns
 
-stmtToASM (Call (AstSymbol "for") [AstSymbol v, s, e, b]) uid labels locals ret _ _ vt li fns =
+stmtToASM (Call (AstSymbol "for") [AstSymbol v, s, e, b]) uid labels locals ret ls le vt li fns =
+    stmtToASM (Call (AstSymbol "for") [AstSymbol v, s, e, AstInt 1, AstSymbol "up", AstSymbol "<", b])
+              uid labels locals ret ls le vt li fns
+
+-- for with an explicit step, direction ("up"/"down") and comparison ("<"/">")
+stmtToASM (Call (AstSymbol "for") [AstSymbol v, s, e, step, AstSymbol dir, AstSymbol cmpOp, b]) uid labels locals ret _ _ vt li fns =
     let off = Map.findWithDefault 0 v locals
         lS = ".L_s_" ++ show uid
         lE = ".L_e_" ++ show uid
         loopInc = ".L_inc_" ++ show uid
+        stepAsm = exprToASM step locals labels vt fns ++
+                  [ "movq -" ++ show off ++ "(%rbp), %rdx"
+                  , (if dir == "down" then "subq" else "addq") ++ " %rax, %rdx"
+                  , "movq %rdx, -" ++ show off ++ "(%rbp)" ]
         (uid', bStmts, li') = emitStmts b (uid + 1) labels locals ret (Just loopInc) (Just lE) vt li fns
         instrs = exprToASM s locals labels vt fns ++ ["movq %rax, -" ++ show off ++ "(%rbp)", lS ++ ":"] ++ 
-                 exprToASM (Call (AstSymbol "<") [AstSymbol v, e]) locals labels vt fns ++ ["cmpq $0, %rax", "je " ++ lE] ++ 
-                 bStmts ++ [loopInc ++ ":", "movq -" ++ show off ++ "(%rbp), %rax", "incq %rax", "movq %rax, -" ++ show off ++ "(%rbp)", "jmp " ++ lS, lE ++ ":"]
+                 exprToASM (Call (AstSymbol cmpOp) [AstSymbol v, e]) locals labels vt fns ++ ["cmpq $0, %rax", "je " ++ lE] ++ 
+                 bStmts ++ [loopInc ++ ":"] ++ stepAsm ++ ["jmp " ++ lS, lE ++ ":"]
     in (uid', instrs, li')
 
 stmtToASM (IfElse cond th el) uid labels locals ret ls le vt li fns =
@@ -912,6 +938,18 @@ isStringNode :: Ast -> Bool
 isStringNode (AstString _) = True
 isStringNode _ = False
 
+-- | For a for-each item variable (typed "value"), turn the raw value in %rax
+-- into a printable string using its runtime tag (stored in the shadow
+-- "<var>__tag" slot). Other expressions are left untouched.
+prepTaggedValue :: [Ast] -> Map.Map String Int -> Map.Map String Type -> [String]
+prepTaggedValue (AstSymbol s : _) locals vt
+    | Map.lookup s vt == Just (TCustom "value") =
+        let tagOff = Map.findWithDefault 0 (s ++ "__tag") locals
+        in [ "movq %rax, %rsi"
+           , "movq -" ++ show tagOff ++ "(%rbp), %rdi"
+           , "call val_to_string" ]
+prepTaggedValue _ _ _ = []
+
 flattenStringInterp :: [Ast] -> [Ast]
 flattenStringInterp [] = []
 flattenStringInterp (Call (AstSymbol "field-load") args : xs) = (Call (AstSymbol "field-load") args) : flattenStringInterp xs
@@ -925,8 +963,10 @@ buildFormatString vt (AstSymbol s : xs) =
         isFloat = Map.lookup s vt == Just TFloat
         isList = Map.lookup s vt == Just (TCustom "list")
         isKnownInt = Map.lookup s vt == Just TInt
+        isChar = Map.lookup s vt == Just TChar
         fmt = if isStr || isList then "%s"
               else if isFloat then "%f"
+              else if isChar then "%c"
               else if isKnownInt then "%ld"
               else "%s"
     in fmt ++ buildFormatString vt xs
@@ -1116,6 +1156,20 @@ isStringAst vt a = case a of
 
 errLabel :: String -> [(String, Int)] -> Int
 errLabel s labels = maybe 0 id (lookup s labels)
+
+-- | Look up a map value with the key in %rax; reports a Darkness error and
+-- yields 0 when the key is missing instead of returning garbage.
+mapGetChecked :: Int -> [(String, Int)] -> [String]
+mapGetChecked mapOff labels =
+    [ "pushq %rax"
+    , "movq -" ++ show mapOff ++ "(%rbp), %rdi", "movq %rax, %rsi", "call map_contains"
+    , "popq %rsi"
+    , "testq %rax, %rax", "jnz 1f"
+    , "leaq LC" ++ show (errLabel "Map error: key not found\n" labels) ++ "(%rip), %rdi"
+    , "xorq %rsi, %rsi", "call darkness_print"
+    , "xorq %rax, %rax", "jmp 2f"
+    , "1:", "movq -" ++ show mapOff ++ "(%rbp), %rdi", "call map_get"
+    , "2:" ]
 
 listTypeAst :: Map.Map String Type -> Ast -> Bool
 listTypeAst vt (AstSymbol s) = Map.lookup s vt == Just (TCustom "list")

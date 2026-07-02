@@ -14,7 +14,8 @@ listRuntimeBuiltins =
   [ "list_new", "list_push", "list_prepend", "list_insert_after_nth"
   , "list_get_at", "list_get_tag_at", "list_len", "list_is_empty", "list_contains"
   , "list_remove_nth_val", "list_remove_at_idx", "list_remove_after_val"
-  , "list_to_string", "map_new", "map_put", "map_get", "map_remove", "map_contains"
+  , "list_to_string", "val_to_string"
+  , "map_new", "map_put", "map_get", "map_remove", "map_contains"
   , "str_len", "str_contains", "str_split", "darkness_print", "val_eq"
   ]
 

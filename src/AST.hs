@@ -158,9 +158,20 @@ sexprToAST (SList [SSymbol "call", SSymbol "while",
         (_, Left e)        -> Left e
 
 -- -----------------------------------------------------------------------
--- for : WaifuLang émet (call for (v start limit body))
--- Le compilateur attend Call (AstSymbol "for") [AstSymbol v, start, limit, body].
+-- for : WaifuLang émet (call for (v start limit step dir cmp body))
+-- où dir est "up" (incremented) ou "down" (decremented) et cmp "<" ou ">".
 -- -----------------------------------------------------------------------
+sexprToAST (SList [SSymbol "call", SSymbol "for",
+                   SList [SSymbol v, startS, limitS, stepS, SSymbol dir, SSymbol cmp, bodyS]]) =
+    case (sexprToAST startS, sexprToAST limitS, sexprToAST stepS, sexprToAST bodyS) of
+        (Right s, Right l, Right st, Right b) ->
+            Right (Call (AstSymbol "for") [AstSymbol v, s, l, st, AstSymbol dir, AstSymbol cmp, b])
+        (Left e, _, _, _) -> Left e
+        (_, Left e, _, _) -> Left e
+        (_, _, Left e, _) -> Left e
+        (_, _, _, Left e) -> Left e
+
+-- Ancienne forme à 4 éléments (step 1, incrémenté) conservée par compatibilité.
 sexprToAST (SList [SSymbol "call", SSymbol "for",
                    SList [SSymbol v, startS, limitS, bodyS]]) =
     case (sexprToAST startS, sexprToAST limitS, sexprToAST bodyS) of

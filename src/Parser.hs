@@ -2,89 +2,62 @@
 -- EPITECH PROJECT, 2025
 -- Parser
 -- File description:
--- Runtime wrapper to select between TheShow, Lisp, or WaifuLang parser
+-- Dispatch wrapper to select between TheShow, Lisp, or WaifuLang parser
 -}
 
 module Parser (
+  Dialect(..),
+  dialectForFile,
   parseSExpr,
   parseSExprEither,
   parseSExprMultiple,
-  parseSExprMultipleEither,
-  setUseLisp,
-  setUseWaifu,
-  getUseLisp,
-  getUseWaifu
+  parseSExprMultipleEither
 ) where
 
 import qualified Theshow.Parser as TS
 import qualified Lisp.Parser as LP
 import qualified WaifuLang.Parser as WP
 import AST (SExpr(..))
-import System.IO.Unsafe (unsafePerformIO)
-import Data.IORef
+import System.FilePath (takeExtension)
 
--- ============================================================================
--- Runtime Flags (Global State)
--- ============================================================================
+-- | The three surface languages supported by glados.
+data Dialect = TheShow | Lisp | Waifu
+  deriving (Eq, Show)
 
--- Flag pour le mode Lisp (-l)
-{-# NOINLINE useLispRef #-}
-useLispRef :: IORef Bool
-useLispRef = unsafePerformIO (newIORef False)
-
-setUseLisp :: Bool -> IO ()
-setUseLisp v = writeIORef useLispRef v
-
-getUseLisp :: Bool
-getUseLisp = unsafePerformIO (readIORef useLispRef)
-
--- Flag pour le mode WaifuScript (-w)
-{-# NOINLINE useWaifuRef #-}
-useWaifuRef :: IORef Bool
-useWaifuRef = unsafePerformIO (newIORef False)
-
-setUseWaifu :: Bool -> IO ()
-setUseWaifu v = writeIORef useWaifuRef v
-
-getUseWaifu :: Bool
-getUseWaifu = unsafePerformIO (readIORef useWaifuRef)
-
--- ============================================================================
--- Helper: Conversion Either -> Maybe
--- ============================================================================
+-- | Detect the dialect from a source file extension, when recognizable.
+dialectForFile :: FilePath -> Maybe Dialect
+dialectForFile path = case takeExtension path of
+  ".waifu"  -> Just Waifu
+  ".tslang" -> Just TheShow
+  ".tsl"    -> Just TheShow
+  ".scm"    -> Just Lisp
+  ".lisp"   -> Just Lisp
+  _         -> Nothing
 
 eitherToMaybe :: Either a b -> Maybe b
 eitherToMaybe (Right v) = Just v
 eitherToMaybe (Left _)  = Nothing
 
--- ============================================================================
--- Public API with Dispatch Logic
--- ============================================================================
+-- | Parse a single statement/expression (with error message).
+parseSExprEither :: Dialect -> String -> Either String SExpr
+parseSExprEither Lisp    = LP.parseSExprEither
+parseSExprEither Waifu   = WP.parseSExprEither
+parseSExprEither TheShow = TS.parseSExprEither
 
--- | Parse un seul SExpr (version Either pour avoir les erreurs)
-parseSExprEither :: String -> Either String SExpr
-parseSExprEither src
-  | getUseLisp  = LP.parseSExprEither src
-  | getUseWaifu = WP.parseSExprEither src
-  | otherwise   = TS.parseSExprEither src
+-- | Parse a single statement/expression (Maybe version).
+parseSExpr :: Dialect -> String -> Maybe SExpr
+parseSExpr Lisp    = LP.parseSExpr
+parseSExpr Waifu   = eitherToMaybe . WP.parseSExprEither
+parseSExpr TheShow = TS.parseSExpr
 
--- | Parse un seul SExpr (version Maybe)
-parseSExpr :: String -> Maybe SExpr
-parseSExpr s
-  | getUseLisp  = LP.parseSExpr s
-  | getUseWaifu = eitherToMaybe (WP.parseSExprEither s)
-  | otherwise   = TS.parseSExpr s
+-- | Parse a whole program (Maybe version).
+parseSExprMultiple :: Dialect -> String -> Maybe [SExpr]
+parseSExprMultiple Lisp    = LP.parseSExprMultiple
+parseSExprMultiple Waifu   = eitherToMaybe . WP.parseSExprMultipleEither
+parseSExprMultiple TheShow = TS.parseSExprMultiple
 
--- | Parse plusieurs SExpr (version Maybe)
-parseSExprMultiple :: String -> Maybe [SExpr]
-parseSExprMultiple s
-  | getUseLisp  = LP.parseSExprMultiple s
-  | getUseWaifu = eitherToMaybe (WP.parseSExprMultipleEither s)
-  | otherwise   = TS.parseSExprMultiple s
-
--- | Parse plusieurs SExpr (version Either pour avoir les erreurs)
-parseSExprMultipleEither :: String -> Either String [SExpr]
-parseSExprMultipleEither src
-  | getUseLisp  = LP.parseSExprMultipleEither src
-  | getUseWaifu = WP.parseSExprMultipleEither src
-  | otherwise   = TS.parseSExprMultipleEither src
+-- | Parse a whole program (with error message).
+parseSExprMultipleEither :: Dialect -> String -> Either String [SExpr]
+parseSExprMultipleEither Lisp    = LP.parseSExprMultipleEither
+parseSExprMultipleEither Waifu   = WP.parseSExprMultipleEither
+parseSExprMultipleEither TheShow = TS.parseSExprMultipleEither
